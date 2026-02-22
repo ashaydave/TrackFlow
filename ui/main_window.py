@@ -822,7 +822,9 @@ class MainWindow(QMainWindow):
         name = self._playlists[idx]['name']
         self._playlists.pop(idx)
         self._save_playlists()
+        self.playlist_selector.blockSignals(True)
         self.playlist_selector.removeItem(idx)
+        self.playlist_selector.blockSignals(False)
         self._refresh_playlist_table()
         self._status.showMessage(f"Deleted playlist: {name}")
 
@@ -860,7 +862,6 @@ class MainWindow(QMainWindow):
         if idx < 0 or idx >= len(self._playlists):
             return
         pl = self._playlists[idx]
-        from analyzer.batch_analyzer import load_cached
         for fp in pl['tracks']:
             row = self.playlist_table.rowCount()
             self.playlist_table.insertRow(row)
@@ -906,18 +907,27 @@ class MainWindow(QMainWindow):
         if not dest:
             return
         out_dir = Path(dest) / pl['name']
-        out_dir.mkdir(parents=True, exist_ok=True)
-        copied = skipped = 0
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            self._status.showMessage(f"Export failed: could not create folder — {e}")
+            return
+        copied = skipped = errors = 0
         for track_path in pl['tracks']:
             src = Path(track_path)
             if src.exists():
-                shutil.copy2(src, out_dir / src.name)
-                copied += 1
+                try:
+                    shutil.copy2(src, out_dir / src.name)
+                    copied += 1
+                except OSError:
+                    errors += 1
             else:
                 skipped += 1
         msg = f"Exported {copied} tracks to {out_dir}"
         if skipped:
-            msg += f" ({skipped} files not found on disk)"
+            msg += f" ({skipped} not found)"
+        if errors:
+            msg += f" ({errors} copy errors)"
         self._status.showMessage(msg)
 
     # ------------------------------------------------------------------
@@ -951,19 +961,22 @@ class MainWindow(QMainWindow):
 
         # "Add to Playlist" submenu
         playlist_menu = menu.addMenu("Add to Playlist")
+        playlist_actions: dict = {}
         if self._playlists:
             for pl in self._playlists:
                 a = playlist_menu.addAction(pl['name'])
                 a.setData(pl['name'])
+                playlist_actions[a] = pl['name']
         else:
             no_pl = playlist_menu.addAction("No playlists — create one first")
             no_pl.setEnabled(False)
 
         action = menu.exec(self.track_table.viewport().mapToGlobal(pos))
+        if action is None:
+            return
         if action == action_analyze and fp:
             self._start_analysis(fp)
         elif action == action_reveal and fp:
             os.startfile(str(Path(fp).parent))
-        elif action and action.data() and fp:
-            # "Add to Playlist" submenu action
-            self._add_to_playlist(fp, action.data())
+        elif action in playlist_actions and fp:
+            self._add_to_playlist(fp, playlist_actions[action])
