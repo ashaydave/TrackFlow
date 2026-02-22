@@ -5,13 +5,15 @@ PyQt6-based desktop application for browsing and analyzing DJ tracks.
 
 import os
 import sys
+import json
+import shutil
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QFileDialog, QHeaderView, QProgressBar, QStatusBar, QSlider,
-    QMenu, QApplication,
+    QMenu, QApplication, QComboBox, QInputDialog,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint
 from PyQt6.QtGui import QColor, QAction
@@ -33,6 +35,7 @@ ROW_ANALYZING = QColor(10,  30,  70)
 ROW_DONE      = QColor(15,  15,  28)
 
 AUDIO_EXTS = {'.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aiff', '.aif'}
+PLAYLISTS_FILE = Path(__file__).parent.parent / 'data' / 'playlists.json'
 
 # ── Camelot sort order (1A=0, 1B=1, 2A=2, … 12B=23, unknown=24) ──────────────
 _CAMELOT_ORDER: dict = {}
@@ -121,6 +124,7 @@ class MainWindow(QMainWindow):
         self.batch_thread: BatchThread | None = None
         self._row_map: dict = {}   # file_path (str) -> table row index (int)
         self._seek_dragging = False
+        self._playlists: list = []   # list of {"name": str, "tracks": [str]}
 
         self.audio_player = AudioPlayer()
         self.audio_player.position_changed.connect(self._on_position_changed)
@@ -133,6 +137,7 @@ class MainWindow(QMainWindow):
 
         self._init_ui()
         self.setStyleSheet(STYLESHEET)
+        self._load_playlists()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -362,7 +367,73 @@ class MainWindow(QMainWindow):
         self.lbl_audio_meta.setObjectName("meta_text")
         lay.addWidget(self.lbl_audio_meta)
 
-        lay.addStretch()
+        lay.addWidget(self._build_playlist_panel())
+
+        return panel
+
+    def _build_playlist_panel(self) -> QWidget:
+        panel = QWidget()
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(4)
+
+        # Header row
+        header_row = QHBoxLayout()
+        header_lbl = QLabel("PLAYLISTS")
+        header_lbl.setObjectName("section_header")
+        header_row.addWidget(header_lbl)
+        header_row.addStretch()
+        btn_new = QPushButton("+ New")
+        btn_new.setFixedHeight(24)
+        btn_new.clicked.connect(self._new_playlist)
+        header_row.addWidget(btn_new)
+        lay.addLayout(header_row)
+
+        # Selector + action row
+        ctrl_row = QHBoxLayout()
+        self.playlist_selector = QComboBox()
+        self.playlist_selector.setMinimumWidth(160)
+        ctrl_row.addWidget(self.playlist_selector, stretch=1)
+
+        btn_delete = QPushButton("\U0001f5d1")   # 🗑
+        btn_delete.setFixedSize(28, 28)
+        btn_delete.setToolTip("Delete playlist")
+        btn_delete.clicked.connect(self._delete_playlist)
+        ctrl_row.addWidget(btn_delete)
+
+        btn_export = QPushButton("\U0001f4c1 Export")   # 📁
+        btn_export.setFixedHeight(28)
+        btn_export.setToolTip("Copy all tracks to a folder")
+        btn_export.clicked.connect(self._export_playlist)
+        ctrl_row.addWidget(btn_export)
+
+        lay.addLayout(ctrl_row)
+
+        # Playlist track table
+        self.playlist_table = QTableWidget()
+        self.playlist_table.setColumnCount(3)
+        self.playlist_table.setHorizontalHeaderLabels(["Track", "BPM", "Key"])
+        self.playlist_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.playlist_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.playlist_table.verticalHeader().setVisible(False)
+        self.playlist_table.setShowGrid(False)
+        self.playlist_table.setAlternatingRowColors(True)
+        self.playlist_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.playlist_table.customContextMenuRequested.connect(self._playlist_context_menu)
+        self.playlist_table.verticalHeader().setDefaultSectionSize(22)
+
+        ph = self.playlist_table.horizontalHeader()
+        ph.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        ph.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        ph.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.playlist_table.setColumnWidth(1, 55)
+        self.playlist_table.setColumnWidth(2, 55)
+        self.playlist_table.setMaximumHeight(180)
+
+        lay.addWidget(self.playlist_table)
+
+        # Wire selector change
+        self.playlist_selector.currentIndexChanged.connect(self._on_playlist_changed)
 
         return panel
 
@@ -383,6 +454,37 @@ class MainWindow(QMainWindow):
         lay.addWidget(val)
 
         return card, val
+
+    # ------------------------------------------------------------------
+    # Playlist persistence
+    # ------------------------------------------------------------------
+
+    def _load_playlists(self) -> None:
+        """Load playlists from JSON on startup."""
+        try:
+            if PLAYLISTS_FILE.exists():
+                with open(PLAYLISTS_FILE) as f:
+                    data = json.load(f)
+                self._playlists = data.get('playlists', [])
+        except Exception as e:
+            print(f"Could not load playlists: {e}")
+            self._playlists = []
+        # Populate the selector
+        self.playlist_selector.blockSignals(True)
+        self.playlist_selector.clear()
+        for pl in self._playlists:
+            self.playlist_selector.addItem(pl['name'])
+        self.playlist_selector.blockSignals(False)
+        self._refresh_playlist_table()
+
+    def _save_playlists(self) -> None:
+        """Persist playlists to JSON."""
+        try:
+            PLAYLISTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(PLAYLISTS_FILE, 'w') as f:
+                json.dump({'playlists': self._playlists}, f, indent=2)
+        except Exception as e:
+            print(f"Could not save playlists: {e}")
 
     # ------------------------------------------------------------------
     # Track loading
@@ -696,6 +798,129 @@ class MainWindow(QMainWindow):
         self.lbl_vol.setText(f"{val}%")
 
     # ------------------------------------------------------------------
+    # Playlist actions
+    # ------------------------------------------------------------------
+
+    def _new_playlist(self) -> None:
+        name, ok = QInputDialog.getText(self, "New Playlist", "Playlist name:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        if any(p['name'] == name for p in self._playlists):
+            self._status.showMessage(f"Playlist '{name}' already exists.")
+            return
+        self._playlists.append({'name': name, 'tracks': []})
+        self._save_playlists()
+        self.playlist_selector.addItem(name)
+        self.playlist_selector.setCurrentText(name)
+        self._status.showMessage(f"Created playlist: {name}")
+
+    def _delete_playlist(self) -> None:
+        idx = self.playlist_selector.currentIndex()
+        if idx < 0:
+            return
+        name = self._playlists[idx]['name']
+        self._playlists.pop(idx)
+        self._save_playlists()
+        self.playlist_selector.removeItem(idx)
+        self._refresh_playlist_table()
+        self._status.showMessage(f"Deleted playlist: {name}")
+
+    def _add_to_playlist(self, file_path: str, playlist_name: str) -> None:
+        for pl in self._playlists:
+            if pl['name'] == playlist_name:
+                if file_path not in pl['tracks']:
+                    pl['tracks'].append(file_path)
+                    self._save_playlists()
+                    if self.playlist_selector.currentText() == playlist_name:
+                        self._refresh_playlist_table()
+                    self._status.showMessage(
+                        f"Added '{Path(file_path).stem}' to {playlist_name}"
+                    )
+                else:
+                    self._status.showMessage("Track already in playlist.")
+                return
+
+    def _remove_from_playlist(self, file_path: str) -> None:
+        idx = self.playlist_selector.currentIndex()
+        if idx < 0:
+            return
+        pl = self._playlists[idx]
+        if file_path in pl['tracks']:
+            pl['tracks'].remove(file_path)
+            self._save_playlists()
+            self._refresh_playlist_table()
+
+    def _on_playlist_changed(self, index: int) -> None:
+        self._refresh_playlist_table()
+
+    def _refresh_playlist_table(self) -> None:
+        self.playlist_table.setRowCount(0)
+        idx = self.playlist_selector.currentIndex()
+        if idx < 0 or idx >= len(self._playlists):
+            return
+        pl = self._playlists[idx]
+        from analyzer.batch_analyzer import load_cached
+        for fp in pl['tracks']:
+            row = self.playlist_table.rowCount()
+            self.playlist_table.insertRow(row)
+            name_item = QTableWidgetItem(Path(fp).stem)
+            name_item.setData(Qt.ItemDataRole.UserRole, fp)
+            name_item.setToolTip(fp)
+            self.playlist_table.setItem(row, 0, name_item)
+            # Fill BPM/Key from cache if available
+            cached = load_cached(Path(fp))
+            if cached:
+                bpm = cached.get('bpm')
+                camelot = cached.get('key', {}).get('camelot', '--')
+                self.playlist_table.setItem(row, 1, QTableWidgetItem(str(bpm) if bpm else "--"))
+                self.playlist_table.setItem(row, 2, QTableWidgetItem(camelot))
+            else:
+                self.playlist_table.setItem(row, 1, QTableWidgetItem("--"))
+                self.playlist_table.setItem(row, 2, QTableWidgetItem("--"))
+
+    def _playlist_context_menu(self, pos: QPoint) -> None:
+        item = self.playlist_table.itemAt(pos)
+        if not item:
+            return
+        row = item.row()
+        fp_item = self.playlist_table.item(row, 0)
+        if not fp_item:
+            return
+        fp = fp_item.data(Qt.ItemDataRole.UserRole)
+        menu = QMenu(self)
+        action_remove = menu.addAction("Remove from playlist")
+        action = menu.exec(self.playlist_table.viewport().mapToGlobal(pos))
+        if action == action_remove and fp:
+            self._remove_from_playlist(fp)
+
+    def _export_playlist(self) -> None:
+        idx = self.playlist_selector.currentIndex()
+        if idx < 0:
+            return
+        pl = self._playlists[idx]
+        if not pl['tracks']:
+            self._status.showMessage("Playlist is empty — nothing to export.")
+            return
+        dest = QFileDialog.getExistingDirectory(self, "Select Export Destination")
+        if not dest:
+            return
+        out_dir = Path(dest) / pl['name']
+        out_dir.mkdir(parents=True, exist_ok=True)
+        copied = skipped = 0
+        for track_path in pl['tracks']:
+            src = Path(track_path)
+            if src.exists():
+                shutil.copy2(src, out_dir / src.name)
+                copied += 1
+            else:
+                skipped += 1
+        msg = f"Exported {copied} tracks to {out_dir}"
+        if skipped:
+            msg += f" ({skipped} files not found on disk)"
+        self._status.showMessage(msg)
+
+    # ------------------------------------------------------------------
     # Search / filter
     # ------------------------------------------------------------------
 
@@ -722,9 +947,23 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         action_analyze = menu.addAction("Re-analyze")
         action_reveal  = menu.addAction("Open in Explorer")
+        menu.addSeparator()
+
+        # "Add to Playlist" submenu
+        playlist_menu = menu.addMenu("Add to Playlist")
+        if self._playlists:
+            for pl in self._playlists:
+                a = playlist_menu.addAction(pl['name'])
+                a.setData(pl['name'])
+        else:
+            no_pl = playlist_menu.addAction("No playlists — create one first")
+            no_pl.setEnabled(False)
 
         action = menu.exec(self.track_table.viewport().mapToGlobal(pos))
         if action == action_analyze and fp:
             self._start_analysis(fp)
         elif action == action_reveal and fp:
             os.startfile(str(Path(fp).parent))
+        elif action and action.data() and fp:
+            # "Add to Playlist" submenu action
+            self._add_to_playlist(fp, action.data())
