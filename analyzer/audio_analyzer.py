@@ -61,7 +61,7 @@ class AudioAnalyzer:
             'filename': file_path.name,
             'bpm': self._detect_bpm(S_power, sr),
             'key': self._detect_key(S_power, n_frames, sr),
-            'energy': self._calculate_energy(y),
+            'energy': self._calculate_energy_full(file_path),
             'metadata': metadata,
             'audio_info': audio_info,
             'duration': audio_info.get('duration', len(y) / sr),
@@ -249,6 +249,33 @@ class AudioAnalyzer:
             return {'level': energy, 'rms': avg_rms, 'description': descriptions[energy]}
         except Exception as e:
             print(f"Energy calculation failed: {e}")
+            return {'level': 5, 'rms': 0.0, 'description': 'Unknown'}
+
+    def _calculate_energy_full(self, file_path):
+        """Full-track energy RMS via chunked soundfile reads — no large array in memory."""
+        CHUNK = 65536
+        try:
+            sum_sq = 0.0
+            n_frames = 0
+            with sf.SoundFile(str(file_path)) as f:
+                for block in f.blocks(blocksize=CHUNK, dtype='float32'):
+                    mono = block.mean(axis=1) if block.ndim == 2 else block
+                    sum_sq += float(np.sum(mono ** 2))
+                    n_frames += len(mono)
+            if n_frames == 0:
+                raise ValueError("Empty audio file")
+            avg_rms = float(np.sqrt(sum_sq / n_frames))
+            thresholds = [0.05, 0.08, 0.11, 0.14, 0.17, 0.20, 0.23, 0.26, 0.30]
+            energy = next(
+                (i + 1 for i, t in enumerate(thresholds) if avg_rms < t), 10
+            )
+            descriptions = {
+                1: 'Very Low', 2: 'Low', 3: 'Low-Med', 4: 'Medium', 5: 'Medium',
+                6: 'Med-High', 7: 'High', 8: 'High', 9: 'Very High', 10: 'Peak',
+            }
+            return {'level': energy, 'rms': avg_rms, 'description': descriptions[energy]}
+        except Exception as e:
+            print(f"Full energy calculation failed: {e}")
             return {'level': 5, 'rms': 0.0, 'description': 'Unknown'}
 
     # ── METADATA ─────────────────────────────────────────────────────────

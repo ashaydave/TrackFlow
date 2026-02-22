@@ -40,3 +40,15 @@ def test_return_dict_structure():
     assert 'notation' in result['key']
     assert 'camelot' in result['key']
     assert 'level' in result['energy']
+
+@pytest.mark.skipif(not Path(SAMPLE_TRACK).exists(), reason="Sample track not found")
+def test_full_track_energy_structure():
+    """_calculate_energy_full must return correct dict shape and valid level."""
+    analyzer = AudioAnalyzer()
+    result = analyzer._calculate_energy_full(Path(SAMPLE_TRACK))
+    assert isinstance(result, dict)
+    assert 'level' in result
+    assert 'rms' in result
+    assert 'description' in result
+    assert 1 <= result['level'] <= 10
+    assert result['rms'] > 0
