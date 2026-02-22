@@ -34,6 +34,32 @@ ROW_DONE      = QColor(15,  15,  28)
 
 AUDIO_EXTS = {'.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aiff', '.aif'}
 
+# ── Camelot sort order (1A=0, 1B=1, 2A=2, … 12B=23, unknown=24) ──────────────
+_CAMELOT_ORDER: dict = {}
+for _i in range(1, 13):
+    _CAMELOT_ORDER[f"{_i}A"] = (_i - 1) * 2
+    _CAMELOT_ORDER[f"{_i}B"] = (_i - 1) * 2 + 1
+
+
+def _camelot_sort_key(camelot: str) -> int:
+    """Return integer sort key for a Camelot string (1A–12B). Unknown → 24."""
+    return _CAMELOT_ORDER.get(camelot, 24)
+
+
+class NumericTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem whose sort order is its UserRole numeric value."""
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        self_val  = self.data(Qt.ItemDataRole.UserRole)
+        other_val = other.data(Qt.ItemDataRole.UserRole)
+        if self_val is None:
+            return True
+        if other_val is None:
+            return False
+        try:
+            return float(self_val) < float(other_val)
+        except (TypeError, ValueError):
+            return self.text() < other.text()
+
 
 # ---------------------------------------------------------------------------
 # Background threads
@@ -182,8 +208,8 @@ class MainWindow(QMainWindow):
         lay.addWidget(header)
 
         self.track_table = QTableWidget()
-        self.track_table.setColumnCount(4)
-        self.track_table.setHorizontalHeaderLabels(["Track", "BPM", "Key", "\u2605"])
+        self.track_table.setColumnCount(5)
+        self.track_table.setHorizontalHeaderLabels(["Track", "BPM", "Key", "Nrg", "\u2713"])
         self.track_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.track_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.track_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -197,14 +223,20 @@ class MainWindow(QMainWindow):
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         self.track_table.setColumnWidth(1, 58)
         self.track_table.setColumnWidth(2, 64)
-        self.track_table.setColumnWidth(3, 28)
+        self.track_table.setColumnWidth(3, 42)
+        self.track_table.setColumnWidth(4, 22)
 
         self.track_table.verticalHeader().setDefaultSectionSize(22)
 
         self.track_table.itemSelectionChanged.connect(self._on_track_selected)
         self.track_table.customContextMenuRequested.connect(self._library_context_menu)
+        self.track_table.setSortingEnabled(True)
+        self.track_table.horizontalHeader().sortIndicatorChanged.connect(
+            lambda *_: self._rebuild_row_map()
+        )
 
         lay.addWidget(self.track_table)
 
@@ -362,12 +394,14 @@ class MainWindow(QMainWindow):
         )
         if path:
             if path not in self._row_map:
+                self.track_table.setSortingEnabled(False)
                 row = self.track_table.rowCount()
                 self.track_table.insertRow(row)
                 self._set_row(row, path)
                 self._row_map[path] = row
                 self.library_files.append(path)
                 self.track_count_label.setText(f"{len(self.library_files)} tracks")
+                self.track_table.setSortingEnabled(True)
             self._start_analysis(path)
 
     def _load_folder(self):
@@ -384,18 +418,19 @@ class MainWindow(QMainWindow):
 
         self.library_files = files
         self._row_map = {}
+        self.track_table.setSortingEnabled(False)
         self.track_table.setRowCount(0)
         self.track_table.setRowCount(len(files))
 
         for i, fp in enumerate(files):
             self._set_row(i, fp)
             self._row_map[fp] = i
-            # Pre-fill from cache if available
             if is_cached(Path(fp)):
                 cached = load_cached(Path(fp))
                 if cached:
                     self._update_row_from_results(fp, cached)
 
+        self.track_table.setSortingEnabled(True)
         self.track_count_label.setText(f"{len(files)} tracks")
         self.btn_analyze_all.setEnabled(True)
         self._status.showMessage(f"Loaded {len(files)} tracks")
@@ -408,7 +443,8 @@ class MainWindow(QMainWindow):
         self.track_table.setItem(row, 0, item)
         self.track_table.setItem(row, 1, QTableWidgetItem("--"))
         self.track_table.setItem(row, 2, QTableWidgetItem("--"))
-        self.track_table.setItem(row, 3, QTableWidgetItem("\u00b7"))
+        self.track_table.setItem(row, 3, QTableWidgetItem("--"))   # Energy
+        self.track_table.setItem(row, 4, QTableWidgetItem("\u00b7"))  # · (pending)
 
     # ------------------------------------------------------------------
     # Track selection & analysis
@@ -458,11 +494,29 @@ class MainWindow(QMainWindow):
         row = self._row_map.get(file_path)
         if row is None:
             return
-        bpm = results.get('bpm')
-        key = results.get('key', {})
-        self.track_table.setItem(row, 1, QTableWidgetItem(str(bpm) if bpm else "--"))
-        self.track_table.setItem(row, 2, QTableWidgetItem(key.get('camelot', '--')))
-        self.track_table.setItem(row, 3, QTableWidgetItem("\u2713"))
+        bpm          = results.get('bpm')
+        key          = results.get('key', {})
+        energy       = results.get('energy', {})
+        camelot      = key.get('camelot', '--')
+        energy_level = energy.get('level')
+
+        # BPM — numeric sort
+        bpm_item = NumericTableWidgetItem(str(bpm) if bpm else "--")
+        bpm_item.setData(Qt.ItemDataRole.UserRole, float(bpm) if bpm else 999.0)
+        self.track_table.setItem(row, 1, bpm_item)
+
+        # Key — Camelot sort order
+        key_item = NumericTableWidgetItem(camelot)
+        key_item.setData(Qt.ItemDataRole.UserRole, _camelot_sort_key(camelot))
+        self.track_table.setItem(row, 2, key_item)
+
+        # Energy — numeric sort
+        nrg_item = NumericTableWidgetItem(str(energy_level) if energy_level else "--")
+        nrg_item.setData(Qt.ItemDataRole.UserRole, int(energy_level) if energy_level else 0)
+        self.track_table.setItem(row, 3, nrg_item)
+
+        # Status ✓
+        self.track_table.setItem(row, 4, QTableWidgetItem("\u2713"))
         self._highlight_row(row, ROW_DONE)
 
     def _highlight_row(self, row: int, color: QColor):
@@ -470,6 +524,16 @@ class MainWindow(QMainWindow):
             item = self.track_table.item(row, col)
             if item:
                 item.setBackground(color)
+
+    def _rebuild_row_map(self) -> None:
+        """Rebuild _row_map after table sort — keeps file_path→row_index accurate."""
+        self._row_map = {}
+        for row in range(self.track_table.rowCount()):
+            item = self.track_table.item(row, 0)
+            if item:
+                fp = item.data(Qt.ItemDataRole.UserRole)
+                if fp:
+                    self._row_map[fp] = row
 
     # ------------------------------------------------------------------
     # Batch analysis
