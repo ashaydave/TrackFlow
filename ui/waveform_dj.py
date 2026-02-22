@@ -33,9 +33,9 @@ from PyQt6.QtCore import QPointF
 
 # ── Color constants (RGB tuples) ──────────────────────────────────────────────
 
-BASS_COLOR  = np.array([0,   85,  255], dtype=np.float32)
-MID_COLOR   = np.array([0,  170,  255], dtype=np.float32)
-HIGH_COLOR  = np.array([180, 220, 255], dtype=np.float32)
+BASS_COLOR  = np.array([255,  50,   0], dtype=np.float32)   # red   — kicks/subs
+MID_COLOR   = np.array([255, 185,   0], dtype=np.float32)   # amber — melody/vocals
+HIGH_COLOR  = np.array([  0, 200, 255], dtype=np.float32)   # cyan  — cymbals/air
 BG_COLOR    = QColor(8, 8, 16)
 PLAYED_DIM  = 0.35   # brightness multiplier for played bars
 PLAYHEAD_COLOR = QColor(255, 255, 255)
