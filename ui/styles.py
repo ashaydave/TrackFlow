@@ -121,9 +121,8 @@ QLineEdit {
 QLineEdit:focus {
     border-color: #0088ff;
 }
-QLineEdit::placeholder {
-    color: #445566;
-}
+/* Note: placeholder text color must be set via QPalette in Python code,
+   QLineEdit::placeholder is not valid Qt QSS */
 
 /* ─── Sliders ───────────────────────────────────────────── */
 QSlider::groove:horizontal {
