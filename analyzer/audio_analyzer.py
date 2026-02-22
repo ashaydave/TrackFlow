@@ -234,23 +234,6 @@ class AudioAnalyzer:
 
     # ── ENERGY ───────────────────────────────────────────────────────────
 
-    def _calculate_energy(self, y):
-        """Energy level 1–10 from RMS (pure numpy, no librosa)."""
-        try:
-            avg_rms = float(np.sqrt(np.mean(y ** 2)))
-            thresholds = [0.05, 0.08, 0.11, 0.14, 0.17, 0.20, 0.23, 0.26, 0.30]
-            energy = next(
-                (i + 1 for i, t in enumerate(thresholds) if avg_rms < t), 10
-            )
-            descriptions = {
-                1: 'Very Low', 2: 'Low', 3: 'Low-Med', 4: 'Medium', 5: 'Medium',
-                6: 'Med-High', 7: 'High', 8: 'High', 9: 'Very High', 10: 'Peak',
-            }
-            return {'level': energy, 'rms': avg_rms, 'description': descriptions[energy]}
-        except Exception as e:
-            print(f"Energy calculation failed: {e}")
-            return {'level': 5, 'rms': 0.0, 'description': 'Unknown'}
-
     def _calculate_energy_full(self, file_path):
         """Full-track energy RMS via chunked soundfile reads — no large array in memory."""
         CHUNK = 65536
