@@ -20,7 +20,7 @@ def test_cache_roundtrip():
 
     # Clean up
     cache_file = CACHE_DIR / f"{_cache_key(fp)}.json"
-    cache_file.unlink()
+    cache_file.unlink(missing_ok=True)
     assert not is_cached(fp)
 
 def test_missing_file_not_cached(tmp_path):

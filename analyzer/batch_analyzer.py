@@ -7,7 +7,7 @@ Cache key: MD5 hash of (absolute path + file mtime + file size).
 
 import json
 import hashlib
-import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -71,24 +71,23 @@ class BatchAnalyzer(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._cancelled = False
+        self._cancel_event = threading.Event()
 
     def analyze_all(self, file_paths: list) -> None:
         """
         Analyze list of file paths. Emits signals as each completes.
         Cache hits are returned immediately without re-analyzing.
-        Call from a background QThread or use run_in_thread().
+        Call from a background QThread.
         """
-        self._cancelled = False
+        self._cancel_event.clear()
         total = len(file_paths)
         completed = 0
         cached_count = 0
-        analyzer_pool = [AudioAnalyzer() for _ in range(MAX_WORKERS)]
 
         # First pass: emit cached results immediately
         uncached = []
         for i, path_str in enumerate(file_paths):
-            if self._cancelled:
+            if self._cancel_event.is_set():
                 break
             fp = Path(path_str)
             cached = load_cached(fp)
@@ -101,16 +100,19 @@ class BatchAnalyzer(QObject):
                 uncached.append((i, path_str))
 
         # Second pass: analyze uncached in parallel
-        if not uncached and not self._cancelled:
+        if not uncached or self._cancel_event.is_set():
             self.all_done.emit(total - cached_count, cached_count)
             return
 
+        cancel_event = self._cancel_event  # local ref for thread safety
+
         def _analyze_one(args):
             idx, path_str = args
-            if self._cancelled:
-                return None, path_str, None
+            if cancel_event.is_set():
+                return 'cancelled', path_str, None
             try:
-                analyzer = analyzer_pool[idx % MAX_WORKERS]
+                # Fresh analyzer per task — thread-safe, no shared state
+                analyzer = AudioAnalyzer()
                 results = analyzer.analyze_track(path_str)
                 save_cached(Path(path_str), results)
                 return 'ok', path_str, results
@@ -120,18 +122,18 @@ class BatchAnalyzer(QObject):
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = {executor.submit(_analyze_one, item): item for item in uncached}
             for future in as_completed(futures):
-                if self._cancelled:
-                    break
                 status, path_str, payload = future.result()
                 completed += 1
                 if status == 'ok':
                     self.track_done.emit(path_str, payload, completed, total)
                 elif status == 'error':
                     self.error.emit(path_str, payload)
+                # 'cancelled' — skip silently, no signal needed
                 self.progress.emit(completed, total)
+                if cancel_event.is_set():
+                    break
 
-        if not self._cancelled:
-            self.all_done.emit(total - cached_count, cached_count)
+        self.all_done.emit(total - cached_count, cached_count)
 
     def cancel(self) -> None:
-        self._cancelled = True
+        self._cancel_event.set()
