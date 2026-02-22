@@ -1,161 +1,164 @@
+# ui/audio_player.py
 """
-Audio Player - Handles audio playback for track preview
+Audio Player — pygame-based playback with correct state machine.
+States: STOPPED → PLAYING → PAUSED → PLAYING (via resume)
+        PLAYING/PAUSED → STOPPED (via stop)
 """
 
 import pygame
+import time
+from enum import Enum, auto
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from pathlib import Path
-import time
+
+
+class PlayerState(Enum):
+    STOPPED = auto()
+    PLAYING = auto()
+    PAUSED  = auto()
 
 
 class AudioPlayer(QObject):
-    """Audio player with playback controls"""
+    """Pygame-backed audio player with clean state machine."""
 
-    position_changed = pyqtSignal(float)  # Emits current position (0.0 to 1.0)
+    position_changed  = pyqtSignal(float)   # 0.0–1.0
     playback_finished = pyqtSignal()
 
     def __init__(self):
         super().__init__()
+        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
 
-        # Initialize pygame mixer
-        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+        self.current_file: str | None = None
+        self.duration: float = 0.0
+        self.state = PlayerState.STOPPED
+        self._play_start_time: float = 0.0
+        self._paused_at_seconds: float = 0.0
 
-        self.current_file = None
-        self.is_playing = False
-        self.duration = 0  # in seconds
-        self.start_time = 0  # Track when playback started
-        self.pause_position = 0  # Track position when paused
+        self._timer = QTimer()
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self._tick)
 
-        # Timer to update playback position
-        self.position_timer = QTimer()
-        self.position_timer.setInterval(50)  # Update every 50ms for smooth playhead
-        self.position_timer.timeout.connect(self.update_position)
+    # ── Properties ───────────────────────────────────────────────────────
 
-    def load(self, file_path):
-        """Load an audio file"""
+    @property
+    def is_playing(self) -> bool:
+        return self.state == PlayerState.PLAYING
+
+    # ── Public API ───────────────────────────────────────────────────────
+
+    def load(self, file_path: str) -> bool:
+        """Load file. Does NOT start playback."""
         try:
             self.stop()
-
-            # Ensure mixer is initialized
             if not pygame.mixer.get_init():
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
-
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
             pygame.mixer.music.load(str(file_path))
-            self.current_file = file_path
-            self.duration = 0
-
-            # Small delay to ensure file is loaded
-            import time
-            time.sleep(0.1)
-
+            self.current_file = str(file_path)
+            self.duration = 0.0
+            self._paused_at_seconds = 0.0
             return True
         except Exception as e:
-            print(f"Error loading audio: {e}")
+            print(f"AudioPlayer.load error: {e}")
             return False
 
-    def set_duration(self, duration):
-        """Set track duration (from analysis results)"""
+    def set_duration(self, duration: float) -> None:
         self.duration = duration
 
-    def play(self):
-        """Start playback from beginning"""
-        if self.current_file:
-            try:
-                pygame.mixer.music.play()
-                self.is_playing = True
-                self.start_time = time.time()
-                self.pause_position = 0
-                self.position_timer.start()
-            except Exception as e:
-                print(f"Error playing: {e}")
+    def play(self) -> None:
+        """Start from beginning (or from seek position if recently seeked)."""
+        if not self.current_file:
+            return
+        try:
+            pygame.mixer.music.play()
+            self.state = PlayerState.PLAYING
+            self._play_start_time = time.time()
+            self._paused_at_seconds = 0.0
+            self._timer.start()
+        except Exception as e:
+            print(f"AudioPlayer.play error: {e}")
 
-    def pause(self):
-        """Pause playback"""
-        if self.is_playing:
+    def pause(self) -> None:
+        if self.state != PlayerState.PLAYING:
+            return
+        try:
+            self._paused_at_seconds = self._current_seconds()
             pygame.mixer.music.pause()
-            self.is_playing = False
-            # Save current position
-            self.pause_position = self.get_position()
-            self.position_timer.stop()
+            self.state = PlayerState.PAUSED
+            self._timer.stop()
+        except Exception as e:
+            print(f"AudioPlayer.pause error: {e}")
 
-    def resume(self):
-        """Resume playback"""
-        if not self.is_playing and self.current_file:
+    def resume(self) -> None:
+        if self.state != PlayerState.PAUSED:
+            return
+        try:
             pygame.mixer.music.unpause()
-            self.is_playing = True
-            # Adjust start time to account for pause
-            elapsed = self.pause_position * self.duration
-            self.start_time = time.time() - elapsed
-            self.position_timer.start()
+            self.state = PlayerState.PLAYING
+            # Recalculate start time so position tracking is accurate
+            self._play_start_time = time.time() - self._paused_at_seconds
+            self._timer.start()
+        except Exception as e:
+            print(f"AudioPlayer.resume error: {e}")
 
-    def stop(self):
-        """Stop playback"""
-        pygame.mixer.music.stop()
-        self.is_playing = False
-        self.pause_position = 0
-        self.position_timer.stop()
+    def stop(self) -> None:
+        try:
+            pygame.mixer.music.stop()
+        except Exception:
+            pass
+        self.state = PlayerState.STOPPED
+        self._paused_at_seconds = 0.0
+        self._timer.stop()
         self.position_changed.emit(0.0)
 
-    def seek(self, position):
-        """Seek to position (0.0 to 1.0)"""
-        if self.current_file and self.duration > 0:
-            time_seconds = position * self.duration
-            was_playing = self.is_playing
-
-            try:
-                # Stop current playback
-                pygame.mixer.music.stop()
-
-                # Restart from new position
-                pygame.mixer.music.play(start=time_seconds)
-                self.start_time = time.time() - time_seconds
-                self.pause_position = position
-
-                if was_playing:
-                    self.is_playing = True
-                    self.position_timer.start()
-                else:
-                    pygame.mixer.music.pause()
-                    self.is_playing = False
-
-                # Immediately update position
-                self.position_changed.emit(position)
-
-            except Exception as e:
-                print(f"Error seeking: {e}")
-
-    def get_position(self):
-        """Get current playback position (0.0 to 1.0)"""
-        if not self.current_file or self.duration == 0:
-            return 0.0
-
-        if not self.is_playing:
-            return self.pause_position
-
+    def seek(self, position: float) -> None:
+        """Seek to normalized position (0.0–1.0)."""
+        if not self.current_file or self.duration <= 0:
+            return
+        target_secs = max(0.0, min(position * self.duration, self.duration))
+        was_playing = (self.state == PlayerState.PLAYING)
         try:
-            # Calculate position based on elapsed time
-            elapsed = time.time() - self.start_time
-            position = elapsed / self.duration
-            return min(1.0, max(0.0, position))
-        except:
-            return 0.0
-
-    def update_position(self):
-        """Update and emit current position"""
-        if self.is_playing:
-            # Check if playback finished
-            if not pygame.mixer.music.get_busy():
-                self.stop()
-                self.playback_finished.emit()
-                return
-
-            position = self.get_position()
+            pygame.mixer.music.stop()
+            pygame.mixer.music.play(start=target_secs)
+            self._play_start_time = time.time() - target_secs
+            self._paused_at_seconds = target_secs
+            if was_playing:
+                self.state = PlayerState.PLAYING
+                self._timer.start()
+            else:
+                pygame.mixer.music.pause()
+                self.state = PlayerState.PAUSED
             self.position_changed.emit(position)
+        except Exception as e:
+            print(f"AudioPlayer.seek error: {e}")
 
-    def set_volume(self, volume):
-        """Set volume (0.0 to 1.0)"""
-        pygame.mixer.music.set_volume(volume)
+    def set_volume(self, volume: float) -> None:
+        """Volume 0.0–1.0."""
+        try:
+            pygame.mixer.music.set_volume(max(0.0, min(1.0, volume)))
+        except Exception:
+            pass
 
-    def get_volume(self):
-        """Get current volume (0.0 to 1.0)"""
-        return pygame.mixer.music.get_volume()
+    def get_position(self) -> float:
+        """Current position as 0.0–1.0."""
+        if not self.current_file or self.duration <= 0:
+            return 0.0
+        secs = self._current_seconds()
+        return max(0.0, min(1.0, secs / self.duration))
+
+    # ── Internal ─────────────────────────────────────────────────────────
+
+    def _current_seconds(self) -> float:
+        if self.state == PlayerState.PAUSED:
+            return self._paused_at_seconds
+        if self.state == PlayerState.PLAYING:
+            return time.time() - self._play_start_time
+        return 0.0
+
+    def _tick(self) -> None:
+        if self.state != PlayerState.PLAYING:
+            return
+        if not pygame.mixer.music.get_busy():
+            self.stop()
+            self.playback_finished.emit()
+            return
+        self.position_changed.emit(self.get_position())
