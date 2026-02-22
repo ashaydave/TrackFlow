@@ -395,13 +395,16 @@ class MainWindow(QMainWindow):
         if path:
             if path not in self._row_map:
                 self.track_table.setSortingEnabled(False)
-                row = self.track_table.rowCount()
-                self.track_table.insertRow(row)
-                self._set_row(row, path)
-                self._row_map[path] = row
-                self.library_files.append(path)
-                self.track_count_label.setText(f"{len(self.library_files)} tracks")
-                self.track_table.setSortingEnabled(True)
+                try:
+                    row = self.track_table.rowCount()
+                    self.track_table.insertRow(row)
+                    self._set_row(row, path)
+                    self._row_map[path] = row
+                    self.library_files.append(path)
+                    self.track_count_label.setText(f"{len(self.library_files)} tracks")
+                finally:
+                    self.track_table.setSortingEnabled(True)
+                    self._rebuild_row_map()   # resort may have moved every row
             self._start_analysis(path)
 
     def _load_folder(self):
@@ -419,18 +422,18 @@ class MainWindow(QMainWindow):
         self.library_files = files
         self._row_map = {}
         self.track_table.setSortingEnabled(False)
-        self.track_table.setRowCount(0)
-        self.track_table.setRowCount(len(files))
-
-        for i, fp in enumerate(files):
-            self._set_row(i, fp)
-            self._row_map[fp] = i
-            if is_cached(Path(fp)):
-                cached = load_cached(Path(fp))
-                if cached:
-                    self._update_row_from_results(fp, cached)
-
-        self.track_table.setSortingEnabled(True)
+        try:
+            self.track_table.setRowCount(0)
+            self.track_table.setRowCount(len(files))
+            for i, fp in enumerate(files):
+                self._set_row(i, fp)
+                self._row_map[fp] = i
+                if is_cached(Path(fp)):
+                    cached = load_cached(Path(fp))
+                    if cached:
+                        self._update_row_from_results(fp, cached)
+        finally:
+            self.track_table.setSortingEnabled(True)
         self.track_count_label.setText(f"{len(files)} tracks")
         self.btn_analyze_all.setEnabled(True)
         self._status.showMessage(f"Loaded {len(files)} tracks")
