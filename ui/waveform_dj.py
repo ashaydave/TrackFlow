@@ -13,9 +13,9 @@ Waveform data is a numpy array shape (N_BARS, 4):
   col 3: high ratio  (4000+ Hz)
 
 Color mapping:
-  bass  → (0,   85,  255)  deep blue
-  mid   → (0,  170,  255)  sky blue / cyan
-  high  → (180, 220, 255)  near-white blue
+  bass  → (255,  50,   0)  red    — kicks/subs
+  mid   → (255, 185,   0)  amber  — melody/vocals
+  high  → (  0, 200, 255)  cyan   — cymbals/air
   Mix   = weighted sum by band ratio
 
 Played portion: bars left of playhead rendered at 35% brightness.

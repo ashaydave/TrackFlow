@@ -1,6 +1,6 @@
 """
 DJ Track Analyzer - Core Audio Analysis Engine
-Optimized for speed: analyzes first 60s only (sufficient for BPM/key/energy).
+Optimized for speed: analyzes first 60s for BPM/key; energy uses full-track RMS via chunked reads.
 Uses soundfile + soxr for fast MP3 decode, scipy FFT for STFT (avoids librosa
 numba cold-start penalty of ~8s). Waveform data is generated separately by
 WaveformThread.
