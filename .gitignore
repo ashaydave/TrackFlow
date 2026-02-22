@@ -1,0 +1,31 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments / conda
+.env
+.venv
+env/
+venv/
+
+# pytest cache
+.pytest_cache/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Project-specific bench & debug scripts (scratch files)
+bench_*.py
+debug_key*.py
+quick_time_test.py
