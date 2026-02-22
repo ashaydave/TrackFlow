@@ -1,185 +1,333 @@
+# ui/waveform_dj.py
 """
-DJ-Style Waveform Widget - Exactly like Rekordbox/VirtualDJ
-Simple, clean, professional stereo waveform
+DJ-Style Frequency-Colored Waveform
+====================================
+Two widgets stacked vertically:
+  - Overview waveform: full track overview, 50px, click-to-seek
+  - Main waveform:     main detail view, 130px, click-to-seek
+
+Waveform data is a numpy array shape (N_BARS, 4):
+  col 0: amplitude (0–1, normalized)
+  col 1: bass ratio  (0–200 Hz share of total spectral energy)
+  col 2: mid ratio   (200–4000 Hz)
+  col 3: high ratio  (4000+ Hz)
+
+Color mapping:
+  bass  → (0,   85,  255)  deep blue
+  mid   → (0,  170,  255)  sky blue / cyan
+  high  → (180, 220, 255)  near-white blue
+  Mix   = weighted sum by band ratio
+
+Played portion: bars left of playhead rendered at 35% brightness.
+
+Rendering: paintEvent reads pre-computed numpy data (no FFT in paint loop).
+Data generation runs in WaveformDataThread (background QThread).
 """
 
-from PyQt6.QtWidgets import QWidget
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush
 import numpy as np
-import librosa
+from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QPolygonF
+from PyQt6.QtCore import QPointF
 
+
+# ── Color constants (RGB tuples) ──────────────────────────────────────────────
+
+BASS_COLOR  = np.array([0,   85,  255], dtype=np.float32)
+MID_COLOR   = np.array([0,  170,  255], dtype=np.float32)
+HIGH_COLOR  = np.array([180, 220, 255], dtype=np.float32)
+BG_COLOR    = QColor(8, 8, 16)
+PLAYED_DIM  = 0.35   # brightness multiplier for played bars
+PLAYHEAD_COLOR = QColor(255, 255, 255)
+
+BAR_W = 2   # bar width in pixels
+GAP   = 1   # gap between bars
+
+
+def _mix_color(amp: float, bass: float, mid: float, high: float) -> QColor:
+    """Blend bass/mid/high colors by energy ratios, scaled by amplitude."""
+    total = bass + mid + high + 1e-9
+    rgb = (BASS_COLOR * bass + MID_COLOR * mid + HIGH_COLOR * high) / total
+    # Scale brightness: quiet sections are darker, loud are brighter
+    brightness = 0.25 + 0.75 * float(amp)
+    r, g, b = (rgb * brightness).clip(0, 255).astype(int)
+    return QColor(int(r), int(g), int(b))
+
+
+# ── Background data computation thread ───────────────────────────────────────
+
+class WaveformDataThread(QThread):
+    """
+    Reads full audio file, computes frequency-colored bar data.
+    Emits data_ready with numpy array shape (N_BARS, 4).
+    """
+
+    data_ready = pyqtSignal(object)   # numpy array, shape (N_BARS, 4)
+    failed     = pyqtSignal(str)
+
+    N_BARS = 400
+    N_FFT  = 512
+    SR     = 22050  # load at this sample rate for waveform
+
+    def __init__(self, file_path: str, parent=None):
+        super().__init__(parent)
+        self.file_path = file_path
+        self._stop = False
+
+    def stop_and_wait(self):
+        self._stop = True
+        self.quit()
+        self.wait(1000)
+
+    def run(self):
+        try:
+            import soundfile as sf
+            import soxr
+
+            # Load full track for waveform (we need the whole file)
+            info = sf.info(self.file_path)
+            data, sr_native = sf.read(
+                self.file_path,
+                dtype='float32',
+                always_2d=False,
+            )
+            if self._stop:
+                return
+
+            # Mono mix
+            if data.ndim == 2:
+                data = data.mean(axis=1)
+
+            # Downsample to SR for speed
+            if sr_native != self.SR:
+                data = soxr.resample(data, sr_native, self.SR, quality='LQ')
+
+            if self._stop:
+                return
+
+            bars = self._compute_bars(data, self.SR)
+            if not self._stop:
+                self.data_ready.emit(bars)
+
+        except Exception as e:
+            if not self._stop:
+                self.failed.emit(str(e))
+
+    def _compute_bars(self, y: np.ndarray, sr: int) -> np.ndarray:
+        """Vectorized frequency-colored bar computation."""
+        n = self.N_BARS
+        fft_n = self.N_FFT
+        spb = max(1, len(y) // n)  # samples per bar
+
+        freqs = np.fft.rfftfreq(fft_n, d=1.0 / sr)
+        bass_mask = freqs < 200
+        mid_mask  = (freqs >= 200) & (freqs < 4000)
+        high_mask = freqs >= 4000
+
+        bars = np.zeros((n, 4), dtype=np.float32)
+
+        for i in range(n):
+            if self._stop:
+                break
+            start = i * spb
+            chunk = y[start: start + fft_n]
+            if len(chunk) < fft_n:
+                chunk = np.pad(chunk, (0, fft_n - len(chunk)))
+
+            # RMS amplitude for this bar
+            bars[i, 0] = np.sqrt(np.mean(chunk ** 2))
+
+            # Frequency band ratios via FFT
+            spec = np.abs(np.fft.rfft(chunk))
+            total = spec.sum() + 1e-9
+            bars[i, 1] = spec[bass_mask].sum() / total
+            bars[i, 2] = spec[mid_mask].sum()  / total
+            bars[i, 3] = spec[high_mask].sum() / total
+
+        # Normalize amplitude to 0–1
+        max_amp = bars[:, 0].max() + 1e-9
+        bars[:, 0] /= max_amp
+
+        return bars
+
+
+# ── Shared base waveform widget ───────────────────────────────────────────────
+
+class _BaseWaveform(QWidget):
+    """Shared rendering for overview and main waveform panels."""
+
+    position_clicked = pyqtSignal(float)   # 0.0–1.0
+
+    def __init__(self, fixed_height: int, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(fixed_height)
+        self.setMouseTracking(True)
+        self._data: np.ndarray | None = None   # shape (N, 4)
+        self._position: float = 0.0
+
+    def set_data(self, data: np.ndarray) -> None:
+        self._data = data
+        self.update()
+
+    def set_position(self, pos: float) -> None:
+        self._position = max(0.0, min(1.0, pos))
+        self.update()
+
+    def clear(self) -> None:
+        self._data = None
+        self._position = 0.0
+        self.update()
+
+    # ── Paint ─────────────────────────────────────────────────────────────
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        # No antialiasing — crisp pixel-exact bars
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        w, h = self.width(), self.height()
+        painter.fillRect(0, 0, w, h, BG_COLOR)
+
+        if self._data is None:
+            painter.setPen(QColor(40, 50, 70))
+            painter.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Loading waveform\u2026"
+            )
+            return
+
+        self._draw_bars(painter, w, h)
+        self._draw_playhead(painter, w, h)
+
+    def _draw_bars(self, painter: QPainter, w: int, h: int) -> None:
+        data = self._data
+        n = len(data)
+        step = BAR_W + GAP                  # 3 pixels per bar slot
+        n_visible = min(n, w // step)
+        half_h = h / 2.0
+        playhead_x = int(self._position * w)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        for i in range(n_visible):
+            x = i * step
+            bar_idx = int(i * n / n_visible)
+            amp, bass, mid, high = (
+                float(data[bar_idx, 0]),
+                float(data[bar_idx, 1]),
+                float(data[bar_idx, 2]),
+                float(data[bar_idx, 3]),
+            )
+
+            bar_h = max(2, int(amp * half_h * 0.92))
+            color = _mix_color(amp, bass, mid, high)
+
+            # Darken played portion
+            if x < playhead_x:
+                color = QColor(
+                    int(color.red()   * PLAYED_DIM),
+                    int(color.green() * PLAYED_DIM),
+                    int(color.blue()  * PLAYED_DIM),
+                )
+
+            painter.setBrush(QBrush(color))
+            # Mirrored: draw from center upward and downward
+            y_top = int(half_h) - bar_h
+            painter.drawRect(x, y_top, BAR_W, bar_h * 2)
+
+    def _draw_playhead(self, painter: QPainter, w: int, h: int) -> None:
+        if self._position <= 0.0:
+            return
+        x = int(self._position * w)
+
+        # White vertical line
+        painter.setPen(QPen(PLAYHEAD_COLOR, 2))
+        painter.drawLine(x, 0, x, h)
+
+        # Triangle marker at top
+        sz = 7
+        triangle = QPolygonF([
+            QPointF(x - sz, 0),
+            QPointF(x + sz, 0),
+            QPointF(x,      sz * 2),
+        ])
+        painter.setBrush(QBrush(PLAYHEAD_COLOR))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawPolygon(triangle)
+
+    # ── Mouse ─────────────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._data is not None:
+            pos = max(0.0, min(1.0, event.position().x() / self.width()))
+            self.position_clicked.emit(pos)
+
+    def setCursor(self, cursor):
+        if self._data is not None:
+            super().setCursor(Qt.CursorShape.PointingHandCursor)
+
+
+# ── Public container widget ───────────────────────────────────────────────────
 
 class WaveformDJ(QWidget):
-    """Professional DJ software style waveform - simple and clean"""
+    """
+    Container widget with overview + main waveform stacked vertically.
+    Manages WaveformDataThread lifecycle — only one thread active at a time.
+
+    Usage:
+        waveform.set_waveform_from_file(path)   # starts background thread
+        waveform.set_playback_position(0.42)    # updates both panels
+        waveform.position_clicked -> float       # seek signal
+    """
 
     position_clicked = pyqtSignal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.waveform_left = None   # Left channel
-        self.waveform_right = None  # Right channel
-        self.playback_position = 0.0
-        self.setMinimumHeight(120)
-        self.setMouseTracking(True)
+        self._thread: WaveformDataThread | None = None
 
-        # Colors - simple like Rekordbox
-        self.bg_color = QColor(25, 25, 25)
-        self.waveform_color = QColor(0, 150, 255)  # Blue
-        self.waveform_dark = QColor(0, 100, 180)   # Darker blue for played portion
-        self.center_line_color = QColor(50, 50, 50)
-        self.playhead_color = QColor(255, 255, 255)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
 
-    def set_waveform_from_file(self, file_path):
-        """Generate clean DJ-style waveform from audio file - FAST"""
-        try:
-            # Load audio - stereo, short duration for speed
-            y, sr = librosa.load(file_path, sr=22050, mono=False, duration=None)
+        self.overview = _BaseWaveform(fixed_height=50)
+        self.main     = _BaseWaveform(fixed_height=130)
 
-            # If mono, duplicate to stereo
-            if len(y.shape) == 1:
-                y = np.array([y, y])
+        layout.addWidget(self.overview)
+        layout.addWidget(self.main)
 
-            # Get left and right channels
-            left = y[0]
-            right = y[1]
+        self.overview.position_clicked.connect(self.position_clicked)
+        self.main.position_clicked.connect(self.position_clicked)
 
-            # Downsample to screen resolution (one sample per 2 pixels)
-            target_samples = 1000  # More samples = smoother but slower
+    def set_waveform_from_file(self, file_path: str) -> None:
+        """Start background thread to compute waveform data."""
+        # Stop any running thread first
+        if self._thread is not None and self._thread.isRunning():
+            self._thread.stop_and_wait()
 
-            left = self._downsample_max(left, target_samples)
-            right = self._downsample_max(right, target_samples)
+        self.overview.clear()
+        self.main.clear()
 
-            self.waveform_left = left
-            self.waveform_right = right
+        self._thread = WaveformDataThread(file_path)
+        self._thread.data_ready.connect(self._on_data_ready)
+        self._thread.failed.connect(
+            lambda msg: print(f"WaveformDataThread failed: {msg}")
+        )
+        self._thread.start()
 
-            self.update()
+    def _on_data_ready(self, data: np.ndarray) -> None:
+        self.overview.set_data(data)
+        self.main.set_data(data)
 
-        except Exception as e:
-            print(f"Waveform error: {e}")
-            self.waveform_left = None
-            self.waveform_right = None
-            self.update()
+    def set_playback_position(self, pos: float) -> None:
+        """Update playhead on both panels (0.0–1.0)."""
+        self.overview.set_position(pos)
+        self.main.set_position(pos)
 
-    def _downsample_max(self, data, target_samples):
-        """Downsample by taking max values (preserves peaks like DJ software)"""
-        if len(data) <= target_samples:
-            return data
-
-        samples_per_bin = len(data) // target_samples
-        result = np.zeros(target_samples)
-
-        for i in range(target_samples):
-            start = i * samples_per_bin
-            end = min(start + samples_per_bin, len(data))
-            # Take max absolute value to show peaks (like DJ software)
-            result[i] = np.max(np.abs(data[start:end]))
-
-        return result
-
-    def set_playback_position(self, position):
-        """Set playback position (0.0 to 1.0)"""
-        self.playback_position = max(0.0, min(1.0, position))
-        self.update()
-
-    def paintEvent(self, event):
-        """Draw the waveform - simple and clean like Rekordbox"""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        # Background
-        painter.fillRect(self.rect(), self.bg_color)
-
-        if self.waveform_left is None or self.waveform_right is None:
-            # Show loading message
-            painter.setPen(QColor(100, 100, 100))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                           "Loading waveform...")
-            return
-
-        # Draw center line
-        mid_y = self.height() / 2
-        painter.setPen(QPen(self.center_line_color, 1))
-        painter.drawLine(0, int(mid_y), self.width(), int(mid_y))
-
-        # Draw stereo waveform (top = left, bottom = right)
-        self.draw_channel(painter, self.waveform_left, is_top=True)
-        self.draw_channel(painter, self.waveform_right, is_top=False)
-
-        # Draw playhead
-        if self.playback_position > 0:
-            self.draw_playhead(painter)
-
-    def draw_channel(self, painter, channel_data, is_top):
-        """Draw one channel of the waveform"""
-        width = self.width()
-        height = self.height()
-        mid_y = height / 2
-        channel_height = height / 2
-
-        num_samples = len(channel_data)
-        playhead_x = int(self.playback_position * width)
-
-        painter.setPen(Qt.PenStyle.NoPen)
-
-        for x in range(width):
-            # Get sample for this pixel
-            sample_idx = int((x / width) * num_samples)
-            if sample_idx >= num_samples:
-                break
-
-            amplitude = channel_data[sample_idx]
-
-            # Scale amplitude to fit channel height
-            bar_height = amplitude * channel_height * 0.9
-
-            # Choose color based on playback position
-            if x < playhead_x:
-                color = self.waveform_dark  # Already played
-            else:
-                color = self.waveform_color  # Not played yet
-
-            painter.setBrush(QBrush(color))
-
-            # Draw bar
-            if is_top:
-                # Top channel (above center line)
-                y = mid_y - bar_height
-                painter.drawRect(x, int(y), 2, int(bar_height))
-            else:
-                # Bottom channel (below center line) - mirrored
-                y = mid_y
-                painter.drawRect(x, int(y), 2, int(bar_height))
-
-    def draw_playhead(self, painter):
-        """Draw playback position indicator"""
-        x = int(self.playback_position * self.width())
-
-        # Playhead line
-        painter.setPen(QPen(self.playhead_color, 2))
-        painter.drawLine(x, 0, x, self.height())
-
-        # Triangle at top
-        painter.setBrush(QBrush(self.playhead_color))
-        painter.setPen(Qt.PenStyle.NoPen)
-
-        size = 8
-        points = [
-            (x, 0),
-            (x - size, size),
-            (x + size, size)
-        ]
-
-        from PyQt6.QtCore import QPointF
-        painter.drawPolygon([QPointF(p[0], p[1]) for p in points])
-
-    def mousePressEvent(self, event):
-        """Click to seek"""
-        if event.button() == Qt.MouseButton.LeftButton:
-            position = event.position().x() / self.width()
-            position = max(0.0, min(1.0, position))
-            self.position_clicked.emit(position)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update()
+    def clear(self) -> None:
+        """Clear both panels and stop any running thread."""
+        if self._thread is not None and self._thread.isRunning():
+            self._thread.stop_and_wait()
+        self.overview.clear()
+        self.main.clear()
