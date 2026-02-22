@@ -149,6 +149,7 @@ class MainWindow(QMainWindow):
         root.addLayout(self._build_toolbar())
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(1)
         splitter.addWidget(self._build_library_panel())
         splitter.addWidget(self._build_detail_panel())
         splitter.setSizes([340, 1060])
@@ -249,7 +250,7 @@ class MainWindow(QMainWindow):
     def _build_detail_panel(self) -> QWidget:
         panel = QWidget()
         lay = QVBoxLayout(panel)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setContentsMargins(10, 0, 4, 0)
         lay.setSpacing(6)
 
         # Track header
