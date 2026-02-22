@@ -431,6 +431,14 @@ class MainWindow(QMainWindow):
         if row is not None:
             self._highlight_row(row, ROW_ANALYZING)
 
+        # Disconnect previous thread to prevent stale results
+        if self.analysis_thread is not None:
+            try:
+                self.analysis_thread.finished.disconnect()
+                self.analysis_thread.error.disconnect()
+            except RuntimeError:
+                pass  # already disconnected
+
         self.analysis_thread = AnalysisThread(file_path)
         self.analysis_thread.finished.connect(self._on_analysis_done)
         self.analysis_thread.error.connect(self._on_analysis_error)
@@ -551,6 +559,7 @@ class MainWindow(QMainWindow):
             self.waveform.set_waveform_from_file(results['file_path'])
             self._enable_controls(True)
         else:
+            self._enable_controls(False)
             self._status.showMessage("Error loading audio")
 
     def _enable_controls(self, enabled: bool):
