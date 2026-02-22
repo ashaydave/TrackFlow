@@ -965,7 +965,6 @@ class MainWindow(QMainWindow):
         if self._playlists:
             for pl in self._playlists:
                 a = playlist_menu.addAction(pl['name'])
-                a.setData(pl['name'])
                 playlist_actions[a] = pl['name']
         else:
             no_pl = playlist_menu.addAction("No playlists — create one first")
