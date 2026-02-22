@@ -250,7 +250,7 @@ class MainWindow(QMainWindow):
     def _build_detail_panel(self) -> QWidget:
         panel = QWidget()
         lay = QVBoxLayout(panel)
-        lay.setContentsMargins(10, 0, 4, 0)
+        lay.setContentsMargins(10, 0, 4, 0)   # 10px left aligns content with library panel edge
         lay.setSpacing(6)
 
         # Track header
