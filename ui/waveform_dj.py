@@ -190,6 +190,13 @@ class _BaseWaveform(QWidget):
         self._zoom_end = max(self._zoom_start + 0.001, min(1.0, end))
         self.update()
 
+    def set_position_and_zoom(self, pos: float, zoom_start: float, zoom_end: float) -> None:
+        """Set position and zoom atomically — triggers only ONE repaint."""
+        self._position   = max(0.0, min(1.0, pos))
+        self._zoom_start = max(0.0, min(1.0, zoom_start))
+        self._zoom_end   = max(self._zoom_start + 0.001, min(1.0, zoom_end))
+        self.update()
+
     def set_hot_cues(self, cues: list) -> None:
         """cues: list of 6 items, each None or {'position': float, 'color': QColor}."""
         self._hot_cues = cues
@@ -363,6 +370,13 @@ class _BaseWaveform(QWidget):
             pos = max(0.0, min(1.0, pos))
             self.position_clicked.emit(pos)
 
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton and self._data is not None:
+            click_frac = max(0.0, min(1.0, event.position().x() / self.width()))
+            zoom_width = self._zoom_end - self._zoom_start
+            pos = self._zoom_start + click_frac * zoom_width
+            self.position_clicked.emit(max(0.0, min(1.0, pos)))
+
     def setCursor(self, cursor):
         if self._data is not None:
             super().setCursor(Qt.CursorShape.PointingHandCursor)
@@ -423,17 +437,18 @@ class WaveformDJ(QWidget):
 
     def set_playback_position(self, pos: float) -> None:
         """Update playhead on both panels and recompute zoom for main."""
-        self.overview.set_position(pos)
-        self.main.set_position(pos)
+        self.overview.set_position(pos)          # overview: no zoom, one update
         if self._duration > 0:
             window_frac = min(1.0, 30.0 / self._duration)
-            half = window_frac / 2.0
+            half  = window_frac / 2.0
             start = max(0.0, pos - half)
             end   = min(1.0, start + window_frac)
             if end >= 1.0:
                 end   = 1.0
                 start = max(0.0, end - window_frac)
-            self.main.set_zoom(start, end)
+            self.main.set_position_and_zoom(pos, start, end)   # ONE repaint
+        else:
+            self.main.set_position(pos)
 
     def clear(self) -> None:
         """Clear both panels and stop any running thread."""
