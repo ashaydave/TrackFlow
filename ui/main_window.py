@@ -699,12 +699,6 @@ class MainWindow(QMainWindow):
         self.btn_loop_b.clicked.connect(self._set_loop_b)
         lay.addWidget(self.btn_loop_b)
 
-        self.btn_loop_toggle = QPushButton("\u27f3 LOOP")
-        self.btn_loop_toggle.setFixedSize(76, 26)
-        self.btn_loop_toggle.setToolTip("Toggle loop on/off  (key: L)")
-        self.btn_loop_toggle.setEnabled(False)
-        self.btn_loop_toggle.clicked.connect(self._toggle_loop)
-        lay.addWidget(self.btn_loop_toggle)
 
         sep = QLabel("|")
         sep.setObjectName("meta_text")
@@ -903,7 +897,6 @@ class MainWindow(QMainWindow):
         self._loop_a = a_secs / total
         self._loop_b = b_secs / total
         self._loop_active = True
-        self.btn_loop_toggle.setEnabled(True)
         self._refresh_loop_buttons()
         self._refresh_waveform_overlays()
         label = "\u00bd" if bars == 0.5 else str(int(bars))
@@ -933,9 +926,6 @@ class MainWindow(QMainWindow):
         # OUT button: green when actively looping, unlit otherwise
         self.btn_loop_b.setStyleSheet(green_style if self._loop_active else "")
         # LOOP toggle: enabled only when both are set; green when looping
-        both_set = self._loop_a is not None and self._loop_b is not None
-        self.btn_loop_toggle.setEnabled(both_set)
-        self.btn_loop_toggle.setStyleSheet(green_style if self._loop_active else "")
 
     def _load_hot_cues(self, file_path: str) -> None:
         """Load saved cues for this track from disk."""
