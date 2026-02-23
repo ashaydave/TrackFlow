@@ -676,7 +676,7 @@ class MainWindow(QMainWindow):
         return row_widget
 
     def _build_loop_row(self) -> QWidget:
-        """Build the A-B loop + bar-snap control row."""
+        """Build the IN/OUT loop + bar-snap control row."""
         row_widget = QWidget()
         lay = QHBoxLayout(row_widget)
         lay.setContentsMargins(0, 0, 0, 2)
@@ -687,15 +687,15 @@ class MainWindow(QMainWindow):
         lbl.setFixedWidth(30)
         lay.addWidget(lbl)
 
-        self.btn_loop_a = QPushButton("A")
-        self.btn_loop_a.setFixedSize(32, 26)
+        self.btn_loop_a = QPushButton("IN")
+        self.btn_loop_a.setFixedSize(44, 26)
         self.btn_loop_a.setToolTip("Set loop in-point  (key: I)")
         self.btn_loop_a.clicked.connect(self._set_loop_a)
         lay.addWidget(self.btn_loop_a)
 
-        self.btn_loop_b = QPushButton("B")
-        self.btn_loop_b.setFixedSize(32, 26)
-        self.btn_loop_b.setToolTip("Set loop out-point  (key: O)")
+        self.btn_loop_b = QPushButton("OUT")
+        self.btn_loop_b.setFixedSize(44, 26)
+        self.btn_loop_b.setToolTip("Set loop out-point / stop loop  (key: O)")
         self.btn_loop_b.clicked.connect(self._set_loop_b)
         lay.addWidget(self.btn_loop_b)
 
@@ -711,10 +711,15 @@ class MainWindow(QMainWindow):
         sep.setFixedWidth(10)
         lay.addWidget(sep)
 
+        _bar_snap_style = (
+            "QPushButton { background-color: #111830; border-color: #223355; }"
+            "QPushButton:hover { background-color: #1a2a50; border-color: #0088ff; color: #00ccff; }"
+        )
         for label, bars in [("\u00bd", 0.5), ("1", 1.0), ("2", 2.0), ("4", 4.0), ("8", 8.0)]:
             btn = QPushButton(label)
-            btn.setFixedSize(28, 26)
+            btn.setFixedSize(34, 26)
             btn.setToolTip(f"Snap loop to {label} bar(s) from nearest beat")
+            btn.setStyleSheet(_bar_snap_style)
             btn.clicked.connect(lambda checked, b=bars: self._snap_loop(b))
             lay.addWidget(btn)
 
