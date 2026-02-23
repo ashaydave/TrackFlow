@@ -511,6 +511,7 @@ class MainWindow(QMainWindow):
         self.playlist_table.setColumnWidth(1, 55)
         self.playlist_table.setColumnWidth(2, 55)
         self.playlist_table.setMaximumHeight(180)
+        self.playlist_table.setSortingEnabled(True)
 
         lay.addWidget(self.playlist_table)
 
@@ -1312,9 +1313,11 @@ class MainWindow(QMainWindow):
         self._refresh_playlist_table()
 
     def _refresh_playlist_table(self) -> None:
+        self.playlist_table.setSortingEnabled(False)
         self.playlist_table.setRowCount(0)
         idx = self.playlist_selector.currentIndex()
         if idx < 0 or idx >= len(self._playlists):
+            self.playlist_table.setSortingEnabled(True)
             return
         pl = self._playlists[idx]
         for fp in pl['tracks']:
@@ -1324,16 +1327,20 @@ class MainWindow(QMainWindow):
             name_item.setData(Qt.ItemDataRole.UserRole, fp)
             name_item.setToolTip(fp)
             self.playlist_table.setItem(row, 0, name_item)
-            # Fill BPM/Key from cache if available
             cached = load_cached(Path(fp))
             if cached:
-                bpm = cached.get('bpm')
+                bpm     = cached.get('bpm')
                 camelot = cached.get('key', {}).get('camelot', '--')
-                self.playlist_table.setItem(row, 1, QTableWidgetItem(str(bpm) if bpm else "--"))
-                self.playlist_table.setItem(row, 2, QTableWidgetItem(camelot))
+                bpm_item = NumericTableWidgetItem(str(bpm) if bpm else "--")
+                bpm_item.setData(Qt.ItemDataRole.UserRole, float(bpm) if bpm else 999.0)
+                self.playlist_table.setItem(row, 1, bpm_item)
+                key_item = NumericTableWidgetItem(camelot)
+                key_item.setData(Qt.ItemDataRole.UserRole, _camelot_sort_key(camelot))
+                self.playlist_table.setItem(row, 2, key_item)
             else:
                 self.playlist_table.setItem(row, 1, QTableWidgetItem("--"))
                 self.playlist_table.setItem(row, 2, QTableWidgetItem("--"))
+        self.playlist_table.setSortingEnabled(True)
 
     def _playlist_context_menu(self, pos: QPoint) -> None:
         item = self.playlist_table.itemAt(pos)
