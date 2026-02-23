@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QMenu, QApplication, QComboBox, QInputDialog,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint
-from PyQt6.QtGui import QColor, QAction
+from PyQt6.QtGui import QColor, QAction, QKeyEvent
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from analyzer.audio_analyzer import AudioAnalyzer
@@ -139,6 +139,7 @@ class MainWindow(QMainWindow):
         self._loop_a: float | None = None
         self._loop_b: float | None = None
         self._loop_active: bool = False
+        self._help_dialog = None
 
         self.audio_player = AudioPlayer()
         self.audio_player.position_changed.connect(self._on_position_changed)
@@ -206,6 +207,12 @@ class MainWindow(QMainWindow):
         self.search_box.setFixedHeight(32)
         self.search_box.setMaximumWidth(280)
         lay.addWidget(self.search_box)
+
+        btn_help = QPushButton("?")
+        btn_help.setFixedSize(28, 32)
+        btn_help.setToolTip("Help / keyboard shortcuts  (F1)")
+        btn_help.clicked.connect(self._show_help)
+        lay.addWidget(btn_help)
 
         lay.addStretch()
 
@@ -1103,6 +1110,89 @@ class MainWindow(QMainWindow):
     def _on_volume_changed(self, val: int):
         self.audio_player.set_volume(val / 100.0)
         self.lbl_vol.setText(f"{val}%")
+
+    def _show_help(self) -> None:
+        """Open (or raise) the non-modal help dialog (stub — replaced in Task 8)."""
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(
+            self, "Help",
+            "Help popup coming soon!\n\nKeyboard shortcuts:\n"
+            "Space — Play/Pause\n← / → — Seek ±5s\n"
+            "Shift+← / → — Seek ±30s\n"
+            "I — Set loop A  |  O — Set loop B  |  L — Toggle loop\n"
+            "1–6 — Hot cue jump/set  |  Shift+1–6 — Clear cue\n"
+            "Enter — Play selected  |  Delete — Remove from playlist\n"
+            "F1 — This window"
+        )
+
+    def _clear_cue(self, idx: int) -> None:
+        self._hot_cues[idx] = None
+        self._save_hot_cues()
+        self._refresh_cue_buttons()
+        self._refresh_waveform_overlays()
+
+    def _delete_selected_playlist_track(self) -> None:
+        rows = self.playlist_table.selectedItems()
+        if not rows:
+            return
+        fp_item = self.playlist_table.item(rows[0].row(), 0)
+        if fp_item:
+            fp = fp_item.data(Qt.ItemDataRole.UserRole)
+            if fp:
+                self._remove_from_playlist(fp)
+
+    def _play_selected_track(self, table: QTableWidget) -> None:
+        rows = table.selectedItems()
+        if not rows:
+            return
+        fp_item = table.item(rows[0].row(), 0)
+        if fp_item:
+            fp = fp_item.data(Qt.ItemDataRole.UserRole)
+            if fp:
+                self._start_analysis(fp)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        key  = event.key()
+        mods = event.modifiers()
+        Mod  = Qt.KeyboardModifier
+        Key  = Qt.Key
+
+        # Don't capture Space when a text input (search box) is focused
+        focused = QApplication.focusWidget()
+        if key == Key.Key_Space and isinstance(focused, QLineEdit):
+            super().keyPressEvent(event)
+            return
+
+        if key == Key.Key_Space:
+            self._toggle_playback()
+        elif key == Key.Key_Left:
+            self._skip(-30 if mods & Mod.ShiftModifier else -5)
+        elif key == Key.Key_Right:
+            self._skip(30 if mods & Mod.ShiftModifier else 5)
+        elif key == Key.Key_I:
+            self._set_loop_a()
+        elif key == Key.Key_O:
+            self._set_loop_b()
+        elif key == Key.Key_L:
+            self._toggle_loop()
+        elif key == Key.Key_F1:
+            self._show_help()
+        elif Key.Key_1 <= key <= Key.Key_6:
+            idx = key - Key.Key_1
+            if mods & Mod.ShiftModifier:
+                self._clear_cue(idx)
+            else:
+                self._on_cue_clicked(idx)
+        elif key in (Key.Key_Return, Key.Key_Enter):
+            if self.track_table.hasFocus():
+                self._play_selected_track(self.track_table)
+            elif self.playlist_table.hasFocus():
+                self._play_selected_track(self.playlist_table)
+        elif key == Key.Key_Delete:
+            if self.playlist_table.hasFocus():
+                self._delete_selected_playlist_track()
+        else:
+            super().keyPressEvent(event)
 
     # ------------------------------------------------------------------
     # Playlist actions
