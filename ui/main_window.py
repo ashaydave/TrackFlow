@@ -388,7 +388,8 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.search_box)
 
         btn_help = QPushButton("?")
-        btn_help.setFixedSize(28, 32)
+        btn_help.setObjectName("btn_help")
+        btn_help.setFixedSize(32, 32)
         btn_help.setToolTip("Help / keyboard shortcuts  (F1)")
         btn_help.clicked.connect(self._show_help)
         lay.addWidget(btn_help)
