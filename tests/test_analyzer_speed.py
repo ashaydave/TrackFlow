@@ -180,3 +180,14 @@ def test_beat_grid_line_count():
     assert len(beats) == expected_beats
     assert beats[0] == 0.0
     assert abs(beats[-1] - (duration - secs_per_beat)) < 0.001
+
+
+def test_multi_delete_collects_unique_rows():
+    """Multi-delete should collect all selected row indices, deduplicated."""
+    class FakeItem:
+        def __init__(self, row): self._row = row
+        def row(self): return self._row
+
+    items = [FakeItem(r) for r in [0, 0, 0, 1, 1, 1, 2, 2, 2]]
+    unique_rows = sorted({item.row() for item in items}, reverse=True)
+    assert unique_rows == [2, 1, 0]

@@ -1380,6 +1380,34 @@ class MainWindow(QMainWindow):
             if fp:
                 self._remove_from_playlist(fp)
 
+
+    def _delete_selected_playlist_tracks(self) -> None:
+        """Remove all selected rows from the current playlist in one pass."""
+        selected_rows = sorted(
+            {item.row() for item in self.playlist_table.selectedItems()},
+            reverse=True,
+        )
+        if not selected_rows:
+            return
+        # Collect file paths before modifying the table
+        paths_to_remove = []
+        for row in selected_rows:
+            fp_item = self.playlist_table.item(row, 0)
+            if fp_item:
+                fp = fp_item.data(Qt.ItemDataRole.UserRole)
+                if fp:
+                    paths_to_remove.append(fp)
+        # Batch-remove from the playlist data model, then refresh once
+        idx = self.playlist_selector.currentIndex()
+        if idx < 0 or not paths_to_remove:
+            return
+        pl = self._playlists[idx]
+        for fp in paths_to_remove:
+            if fp in pl['tracks']:
+                pl['tracks'].remove(fp)
+        self._save_playlists()
+        self._refresh_playlist_table()
+
     def _play_selected_track(self, table: QTableWidget) -> None:
         rows = table.selectedItems()
         if not rows:
