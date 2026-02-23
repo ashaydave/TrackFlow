@@ -890,16 +890,23 @@ class MainWindow(QMainWindow):
         if total <= 0:
             return
         secs_per_bar = 4.0 * 60.0 / float(bpm)
-        cur_secs = self.audio_player.get_position() * total
-        bar_num = round(cur_secs / secs_per_bar)
-        a_secs = bar_num * secs_per_bar
+
+        if self._loop_a is not None:
+            # IN already set: keep it fixed, only adjust OUT (right edge)
+            a_secs = self._loop_a * total
+        else:
+            # No IN yet: snap from current playhead position
+            cur_secs = self.audio_player.get_position() * total
+            bar_num = round(cur_secs / secs_per_bar)
+            a_secs = bar_num * secs_per_bar
+            self._loop_a = a_secs / total
+
         b_secs = min(a_secs + bars * secs_per_bar, total)
-        self._loop_a = a_secs / total
         self._loop_b = b_secs / total
         self._loop_active = True
         self._refresh_loop_buttons()
         self._refresh_waveform_overlays()
-        label = "\u00bd" if bars == 0.5 else str(int(bars))
+        label = "½" if bars == 0.5 else str(int(bars))
         self._status.showMessage(
             f"Loop: {label} bar(s) · {a_secs:.2f}s → {b_secs:.2f}s"
         )

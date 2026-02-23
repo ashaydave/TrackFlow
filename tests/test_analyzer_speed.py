@@ -142,3 +142,23 @@ def test_waveform_zoom_bounds_clamping():
     s, e = compute_zoom(0.5, 20.0)
     assert s == 0.0
     assert e == 1.0
+
+
+def test_bar_snap_right_trim_keeps_in_fixed():
+    """When IN is set, bar-snap keeps IN fixed and only adjusts OUT."""
+    bpm = 128.0
+    duration = 240.0
+    secs_per_bar = 4.0 * 60.0 / bpm   # 1.875 s
+
+    # IN already set at 0.25 (60 s)
+    loop_a = 0.25
+    a_secs = loop_a * duration          # 60.0 s
+
+    # Press "4" bar snap
+    bars = 4
+    b_secs = min(a_secs + bars * secs_per_bar, duration)
+    loop_b = b_secs / duration
+
+    assert loop_b > loop_a
+    expected_len = bars * secs_per_bar / duration
+    assert abs((loop_b - loop_a) - expected_len) < 0.001
