@@ -65,7 +65,7 @@ class WaveformDataThread(QThread):
     data_ready = pyqtSignal(object)   # numpy array, shape (N_BARS, 4)
     failed     = pyqtSignal(str)
 
-    N_BARS = 400
+    N_BARS = 1200
     N_FFT  = 512
     SR     = 22050  # load at this sample rate for waveform
 

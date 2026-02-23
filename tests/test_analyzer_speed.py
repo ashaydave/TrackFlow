@@ -81,6 +81,11 @@ def test_hot_cues_json_roundtrip(tmp_path):
     assert loaded[track_key][3] == {'position': 0.51}
     assert loaded[track_key][0] is None
 
+def test_waveform_n_bars_increased():
+    """N_BARS must be >= 1200 for smooth filled waveform outline."""
+    from ui.waveform_dj import WaveformDataThread
+    assert WaveformDataThread.N_BARS >= 1200
+
 def test_waveform_zoom_bounds_clamping():
     """Zoom window must clamp to [0, 1] and handle short tracks."""
     # Simulate the zoom calculation logic from WaveformDJ.set_playback_position
