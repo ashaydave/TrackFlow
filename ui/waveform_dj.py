@@ -27,7 +27,7 @@ Data generation runs in WaveformDataThread (background QThread).
 import numpy as np
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QPolygonF
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QPolygonF, QImage
 from PyQt6.QtCore import QPointF
 
 
@@ -39,6 +39,7 @@ HIGH_COLOR  = np.array([  0, 200, 255], dtype=np.float32)   # cyan  — cymbals/
 BG_COLOR    = QColor(8, 8, 16)
 PLAYED_DIM  = 0.35   # brightness multiplier for played bars
 PLAYHEAD_COLOR = QColor(255, 255, 255)
+BG_R, BG_G, BG_B = 8, 8, 16        # RGB components of BG_COLOR
 
 BAR_W = 2   # bar width in pixels
 GAP   = 1   # gap between bars
@@ -227,7 +228,7 @@ class _BaseWaveform(QWidget):
             )
             return
 
-        self._draw_bars(painter, w, h)
+        self._draw_waveform(painter, w, h)
         self._draw_loop_region(painter, w, h)
         self._draw_cue_markers(painter, w, h)
         self._draw_playhead(painter, w, h)
@@ -279,6 +280,71 @@ class _BaseWaveform(QWidget):
             painter.setBrush(QBrush(color))
             y_top = int(half_h) - bar_h
             painter.drawRect(x, y_top, BAR_W, bar_h * 2)
+
+    def _draw_waveform(self, painter: QPainter, w: int, h: int) -> None:
+        """Filled seamless waveform via vectorised numpy → QImage blit."""
+        data = self._data
+        n    = len(data)
+
+        # ── Select zoom slice ─────────────────────────────────────────
+        bar_start = int(self._zoom_start * n)
+        bar_end   = max(bar_start + 1, min(n, int(self._zoom_end * n)))
+        n_in_view = bar_end - bar_start
+
+        # ── Map every pixel column → data index ──────────────────────
+        col_idx = np.round(
+            np.linspace(0, n_in_view - 1, w)
+        ).astype(np.int32) + bar_start
+        col_idx = np.clip(col_idx, 0, n - 1)
+
+        amps = data[col_idx, 0].astype(np.float32)   # (w,)
+        bass = data[col_idx, 1].astype(np.float32)
+        mid  = data[col_idx, 2].astype(np.float32)
+        high = data[col_idx, 3].astype(np.float32)
+
+        # ── Vectorised colour mixing (same formula as _mix_color) ─────
+        total      = bass + mid + high + 1e-9
+        brightness = 0.25 + 0.75 * amps              # (w,)
+
+        r_f = (255.0 * bass + 255.0 * mid +   0.0 * high) / total * brightness
+        g_f = ( 50.0 * bass + 185.0 * mid + 200.0 * high) / total * brightness
+        b_f = (  0.0 * bass +   0.0 * mid + 255.0 * high) / total * brightness
+
+        # ── Dim played columns ────────────────────────────────────────
+        zoom_width  = max(1e-9, self._zoom_end - self._zoom_start)
+        playhead_x  = int(
+            max(0.0, (self._position - self._zoom_start) / zoom_width) * w
+        )
+        played_mask = np.arange(w) < playhead_x      # (w,) bool
+        dim         = np.where(played_mask, PLAYED_DIM, 1.0).astype(np.float32)
+        r_u8 = np.clip(r_f * dim, 0, 255).astype(np.uint8)
+        g_u8 = np.clip(g_f * dim, 0, 255).astype(np.uint8)
+        b_u8 = np.clip(b_f * dim, 0, 255).astype(np.uint8)
+
+        # ── Bar heights ───────────────────────────────────────────────
+        half_h      = h // 2
+        bar_heights = np.maximum(1, (amps * half_h * 0.92).astype(np.int32))
+        y_tops      = np.maximum(0, half_h - bar_heights)   # (w,)
+        y_bots      = np.minimum(h, half_h + bar_heights)   # (w,)
+
+        # ── Build RGB888 image array ──────────────────────────────────
+        img = np.empty((h, w, 3), dtype=np.uint8)
+        img[:, :, 0] = BG_R
+        img[:, :, 1] = BG_G
+        img[:, :, 2] = BG_B
+
+        # Vectorised fill via broadcasting: y_grid (h,1) vs y_tops/y_bots (1,w)
+        y_grid = np.arange(h, dtype=np.int32)[:, np.newaxis]   # (h, 1)
+        mask   = (y_grid >= y_tops[np.newaxis, :]) & (y_grid < y_bots[np.newaxis, :])
+        # mask shape: (h, w) bool
+
+        img[:, :, 0] = np.where(mask, r_u8[np.newaxis, :], BG_R)
+        img[:, :, 1] = np.where(mask, g_u8[np.newaxis, :], BG_G)
+        img[:, :, 2] = np.where(mask, b_u8[np.newaxis, :], BG_B)
+
+        # ── Blit to painter (img kept alive as local var) ─────────────
+        qimg = QImage(img.data, w, h, w * 3, QImage.Format.Format_RGB888)
+        painter.drawImage(0, 0, qimg)
 
     def _draw_loop_region(self, painter: QPainter, w: int, h: int) -> None:
         """Draw semi-transparent loop region between A and B points."""
