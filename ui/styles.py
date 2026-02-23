@@ -243,6 +243,12 @@ QLabel#time_display {
     font-family: "Consolas", monospace;
     min-width: 95px;
 }
+QLabel#help_key {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 11px;
+    color: #00ccff;
+    padding: 1px 0;
+}
 
 /* ─── Info Cards ────────────────────────────────────────── */
 QWidget#info_card {

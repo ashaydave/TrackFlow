@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QFileDialog, QHeaderView, QProgressBar, QStatusBar, QSlider,
     QMenu, QApplication, QComboBox, QInputDialog, QAbstractItemView,
+    QDialog, QScrollArea,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint
 from PyQt6.QtGui import QColor, QAction, QKeyEvent
@@ -110,6 +111,131 @@ class PlaylistDropTable(QTableWidget):
             event.acceptProposedAction()
         else:
             super().dropEvent(event)
+
+
+class HelpDialog(QDialog):
+    """Non-modal help dialog with keyboard shortcuts, waveform legend, and algorithm notes."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("DJ Track Analyzer — Help")
+        self.setMinimumSize(480, 520)
+        self.setModal(False)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(8)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        content = QWidget()
+        lay = QVBoxLayout(content)
+        lay.setSpacing(6)
+        lay.setContentsMargins(0, 0, 8, 0)
+
+        def header(text: str) -> None:
+            lbl = QLabel(text)
+            lbl.setObjectName("section_header")
+            lay.addWidget(lbl)
+
+        def shortcut_row(key: str, desc: str) -> None:
+            row_w = QWidget()
+            row_l = QHBoxLayout(row_w)
+            row_l.setContentsMargins(0, 1, 0, 1)
+            row_l.setSpacing(8)
+            k = QLabel(key)
+            k.setObjectName("help_key")
+            k.setFixedWidth(148)
+            d = QLabel(desc)
+            d.setObjectName("meta_text")
+            d.setWordWrap(True)
+            row_l.addWidget(k)
+            row_l.addWidget(d, stretch=1)
+            lay.addWidget(row_w)
+
+        def para(text: str) -> None:
+            lbl = QLabel(text)
+            lbl.setObjectName("meta_text")
+            lbl.setWordWrap(True)
+            lay.addWidget(lbl)
+
+        def divider() -> None:
+            line = QWidget()
+            line.setFixedHeight(1)
+            line.setStyleSheet("background-color: #1e2a3a;")
+            lay.addWidget(line)
+            lay.addSpacing(4)
+
+        # ── Section 1: Keyboard Shortcuts ─────────────────────────────
+        header("Keyboard Shortcuts")
+        lay.addSpacing(2)
+        shortcut_row("Space", "Play / Pause")
+        shortcut_row("\u2190 / \u2192", "Seek \u22125 s / +5 s")
+        shortcut_row("Shift+\u2190 / \u2192", "Seek \u221230 s / +30 s")
+        shortcut_row("I", "Set loop in-point (A)")
+        shortcut_row("O", "Set loop out-point (B)")
+        shortcut_row("L", "Toggle loop on / off")
+        shortcut_row("1 \u2013 6", "Jump to hot cue  (sets if empty)")
+        shortcut_row("Shift+1 \u2013 6", "Clear hot cue")
+        shortcut_row("Enter", "Play selected track (library or playlist)")
+        shortcut_row("Delete", "Remove selected track from playlist")
+        shortcut_row("F1 / ?", "Open this window")
+        lay.addSpacing(4)
+        divider()
+
+        # ── Section 2: Waveform Colors ────────────────────────────────
+        header("Waveform Colors")
+        lay.addSpacing(2)
+        shortcut_row("\U0001f534  Red (bass)", "Kicks, subs, low-end  \u2014  0\u2013200 Hz")
+        shortcut_row("\U0001f7e0  Amber (mids)", "Melody, vocals, snare  \u2014  200\u20134000 Hz")
+        shortcut_row("\U0001f535  Cyan (highs)", "Cymbals, air, hi-hats  \u2014  4000+ Hz")
+        para(
+            "Bar brightness = amplitude. Quiet sections are darker, loud are brighter. "
+            "Bars left of the playhead are dimmed to 35% brightness."
+        )
+        para(
+            "Single waveform (160px): full-track view — "
+            "click or drag anywhere to seek."
+        )
+        lay.addSpacing(4)
+        divider()
+
+        # ── Section 3: Energy Score ───────────────────────────────────
+        header("Energy Score  (1\u201310)")
+        lay.addSpacing(2)
+        para(
+            "Computed as the root-mean-square (RMS) amplitude across the entire track, "
+            "read in 65\u202f536-sample chunks without loading the full file into memory. "
+            "The global RMS is mapped to a 1\u201310 scale via fixed thresholds: "
+            "1\u202f=\u202fnear-silent / ambient,  10\u202f=\u202fpeak-clipped intensity."
+        )
+        lay.addSpacing(4)
+        divider()
+
+        # ── Section 4: Key Detection ──────────────────────────────────
+        header("Key Detection")
+        lay.addSpacing(2)
+        para(
+            "Uses the Krumhansl\u2013Schmuckler pitch-class profile algorithm: "
+            "pitch-class distribution is computed from the audio and correlated against "
+            "all 24 major/minor key profiles. The best match is the detected key."
+        )
+        para(
+            "Displayed in standard notation (e.g.\u202fF\u266f minor) and "
+            "Camelot wheel notation (e.g.\u202f11A) for harmonic mixing. "
+            "Adjacent Camelot numbers (+1 / \u22121) and same number in A/B are harmonically compatible."
+        )
+
+        lay.addStretch()
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        btn_close = QPushButton("Close")
+        btn_close.setFixedHeight(32)
+        btn_close.clicked.connect(self.close)
+        outer.addWidget(btn_close)
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -1171,18 +1297,13 @@ class MainWindow(QMainWindow):
         self.lbl_vol.setText(f"{val}%")
 
     def _show_help(self) -> None:
-        """Open (or raise) the non-modal help dialog (stub — replaced in Task 8)."""
-        from PyQt6.QtWidgets import QMessageBox
-        QMessageBox.information(
-            self, "Help",
-            "Help popup coming soon!\n\nKeyboard shortcuts:\n"
-            "Space — Play/Pause\n← / → — Seek ±5s\n"
-            "Shift+← / → — Seek ±30s\n"
-            "I — Set loop A  |  O — Set loop B  |  L — Toggle loop\n"
-            "1–6 — Hot cue jump/set  |  Shift+1–6 — Clear cue\n"
-            "Enter — Play selected  |  Delete — Remove from playlist\n"
-            "F1 — This window"
-        )
+        """Open (or raise) the non-modal help dialog."""
+        if self._help_dialog is None or not self._help_dialog.isVisible():
+            self._help_dialog = HelpDialog(self)
+            self._help_dialog.setStyleSheet(self.styleSheet())
+        self._help_dialog.show()
+        self._help_dialog.raise_()
+        self._help_dialog.activateWindow()
 
     def _clear_cue(self, idx: int) -> None:
         self._hot_cues[idx] = None
