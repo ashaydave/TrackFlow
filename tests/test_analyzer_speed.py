@@ -52,3 +52,9 @@ def test_full_track_energy_structure():
     assert 'description' in result
     assert 1 <= result['level'] <= 10
     assert result['rms'] > 0
+
+def test_main_window_imports_cleanly():
+    """MainWindow should import without Qt display (headless check)."""
+    from ui.main_window import MainWindow, PlayerState
+    assert MainWindow is not None
+    assert PlayerState is not None

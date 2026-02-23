@@ -724,11 +724,20 @@ class MainWindow(QMainWindow):
         self.lbl_time.setText(f"0:00 / {mm}:{ss:02d}")
 
         # Load audio + waveform
+        # Capture playing state BEFORE load() calls stop() internally
+        was_playing = (self.audio_player.state == PlayerState.PLAYING)
+
         if self.audio_player.load(results['file_path']):
             self.audio_player.set_duration(results.get('duration', dur_sec))
             self.waveform.set_waveform_from_file(results['file_path'])
             self._enable_controls(True)
+            if was_playing:
+                self.audio_player.play()
+                self.btn_play.setText("\u23f8  Pause")
+            else:
+                self.btn_play.setText("\u25b6  Play")
         else:
+            self.btn_play.setText("\u25b6  Play")
             self._enable_controls(False)
             self._status.showMessage("Error loading audio")
 
