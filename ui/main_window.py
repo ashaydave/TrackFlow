@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QDialog, QScrollArea,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint
-from PyQt6.QtGui import QColor, QAction, QKeyEvent
+from PyQt6.QtGui import QColor, QAction, QKeyEvent, QShortcut, QKeySequence
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from analyzer.audio_analyzer import AudioAnalyzer
@@ -332,6 +332,7 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self.setStyleSheet(STYLESHEET)
         self._load_playlists()
+        self._setup_shortcuts()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -358,6 +359,50 @@ class MainWindow(QMainWindow):
         self._status = QStatusBar()
         self.setStatusBar(self._status)
         self._status.showMessage("Ready — load a track or folder to begin")
+
+    def _setup_shortcuts(self) -> None:
+        """Register window-wide shortcuts that fire regardless of which child widget is focused."""
+        def _space():
+            if not isinstance(QApplication.focusWidget(), QLineEdit):
+                self._toggle_playback()
+
+        def _enter():
+            if self.track_table.hasFocus() or self.track_table.viewport().hasFocus():
+                self._play_selected_track(self.track_table)
+            elif self.playlist_table.hasFocus() or self.playlist_table.viewport().hasFocus():
+                self._play_selected_track(self.playlist_table)
+
+        def _delete():
+            fw = QApplication.focusWidget()
+            if not isinstance(fw, QLineEdit):
+                if self.playlist_table.hasFocus() or self.playlist_table.viewport().hasFocus():
+                    self._delete_selected_playlist_tracks()
+
+        pairs = [
+            (QKeySequence(Qt.Key.Key_Space),        _space),
+            (QKeySequence(Qt.Key.Key_Left),         lambda: self._skip(-5)),
+            (QKeySequence("Shift+Left"),            lambda: self._skip(-30)),
+            (QKeySequence(Qt.Key.Key_Right),        lambda: self._skip(5)),
+            (QKeySequence("Shift+Right"),           lambda: self._skip(30)),
+            (QKeySequence(Qt.Key.Key_I),            self._set_loop_a),
+            (QKeySequence(Qt.Key.Key_O),            self._set_loop_b),
+            (QKeySequence(Qt.Key.Key_L),            self._toggle_loop),
+            (QKeySequence(Qt.Key.Key_F1),           self._show_help),
+            (QKeySequence(Qt.Key.Key_Return),       _enter),
+            (QKeySequence(Qt.Key.Key_Enter),        _enter),
+            (QKeySequence(Qt.Key.Key_Delete),       _delete),
+        ]
+        for seq, slot in pairs:
+            sc = QShortcut(seq, self)
+            sc.activated.connect(slot)
+
+        # Cue shortcuts: 1-6 (set) and Shift+1-6 (clear)
+        for n in range(1, 7):
+            idx = n - 1
+            sc_plain = QShortcut(QKeySequence(getattr(Qt.Key, f"Key_{n}")), self)
+            sc_plain.activated.connect(lambda i=idx: self._on_cue_clicked(i))
+            sc_shift = QShortcut(QKeySequence(f"Shift+{n}"), self)
+            sc_shift.activated.connect(lambda i=idx: self._clear_cue(i))
 
     def _build_toolbar(self) -> QHBoxLayout:
         lay = QHBoxLayout()
@@ -1345,48 +1390,6 @@ class MainWindow(QMainWindow):
             if fp:
                 self._start_analysis(fp)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        key  = event.key()
-        mods = event.modifiers()
-        Mod  = Qt.KeyboardModifier
-        Key  = Qt.Key
-
-        # Don't capture Space when a text input (search box) is focused
-        focused = QApplication.focusWidget()
-        if key == Key.Key_Space and isinstance(focused, QLineEdit):
-            super().keyPressEvent(event)
-            return
-
-        if key == Key.Key_Space:
-            self._toggle_playback()
-        elif key == Key.Key_Left:
-            self._skip(-30 if mods & Mod.ShiftModifier else -5)
-        elif key == Key.Key_Right:
-            self._skip(30 if mods & Mod.ShiftModifier else 5)
-        elif key == Key.Key_I:
-            self._set_loop_a()
-        elif key == Key.Key_O:
-            self._set_loop_b()
-        elif key == Key.Key_L:
-            self._toggle_loop()
-        elif key == Key.Key_F1:
-            self._show_help()
-        elif Key.Key_1 <= key <= Key.Key_6:
-            idx = key - Key.Key_1
-            if mods & Mod.ShiftModifier:
-                self._clear_cue(idx)
-            else:
-                self._on_cue_clicked(idx)
-        elif key in (Key.Key_Return, Key.Key_Enter):
-            if self.track_table.hasFocus():
-                self._play_selected_track(self.track_table)
-            elif self.playlist_table.hasFocus():
-                self._play_selected_track(self.playlist_table)
-        elif key == Key.Key_Delete:
-            if self.playlist_table.hasFocus():
-                self._delete_selected_playlist_track()
-        else:
-            super().keyPressEvent(event)
 
     # ------------------------------------------------------------------
     # Playlist actions
