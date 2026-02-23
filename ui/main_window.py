@@ -72,11 +72,16 @@ class DraggableLibraryTable(QTableWidget):
     def mimeData(self, items):
         data = super().mimeData(items)
         if items:
-            fp_item = self.item(items[0].row(), 0)
-            if fp_item:
-                fp = fp_item.data(Qt.ItemDataRole.UserRole)
-                if fp:
-                    data.setText(str(fp))
+            rows = sorted({item.row() for item in items})
+            paths = []
+            for row in rows:
+                fp_item = self.item(row, 0)
+                if fp_item:
+                    fp = fp_item.data(Qt.ItemDataRole.UserRole)
+                    if fp:
+                        paths.append(str(fp))
+            if paths:
+                data.setText("\n".join(paths))
         return data
 
 
@@ -105,9 +110,10 @@ class PlaylistDropTable(QTableWidget):
 
     def dropEvent(self, event):
         if event.mimeData().hasText():
-            fp = event.mimeData().text().strip()
-            if fp:
-                self.file_dropped.emit(fp)
+            for fp in event.mimeData().text().split("\n"):
+                fp = fp.strip()
+                if fp:
+                    self.file_dropped.emit(fp)
             event.acceptProposedAction()
         else:
             super().dropEvent(event)
@@ -463,7 +469,7 @@ class MainWindow(QMainWindow):
         self.track_table.setColumnCount(5)
         self.track_table.setHorizontalHeaderLabels(["Track", "BPM", "Key", "Nrg", "\u2713"])
         self.track_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.track_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.track_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.track_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.track_table.setAlternatingRowColors(True)
         self.track_table.verticalHeader().setVisible(False)
