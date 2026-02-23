@@ -432,8 +432,6 @@ class MainWindow(QMainWindow):
         self.batch_progress.setVisible(False)
         lay.addWidget(self.batch_progress)
 
-        lay.addStretch()   # push search + ? to right edge
-
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search tracks\u2026")
         self.search_box.setFixedHeight(32)
@@ -446,6 +444,8 @@ class MainWindow(QMainWindow):
         btn_help.setToolTip("Help / keyboard shortcuts  (F1)")
         btn_help.clicked.connect(self._show_help)
         lay.addWidget(btn_help)
+
+        lay.addStretch()
 
         # Connections
         self.btn_load_track.clicked.connect(self._load_single_track)
@@ -738,14 +738,14 @@ class MainWindow(QMainWindow):
         lbl.setFixedWidth(30)
         lay.addWidget(lbl)
 
-        self.btn_loop_a = QPushButton("IN")
-        self.btn_loop_a.setFixedSize(44, 26)
+        self.btn_loop_a = QPushButton("I")
+        self.btn_loop_a.setFixedSize(28, 26)
         self.btn_loop_a.setToolTip("Set loop in-point  (key: I)")
         self.btn_loop_a.clicked.connect(self._set_loop_a)
         lay.addWidget(self.btn_loop_a)
 
-        self.btn_loop_b = QPushButton("OUT")
-        self.btn_loop_b.setFixedSize(44, 26)
+        self.btn_loop_b = QPushButton("O")
+        self.btn_loop_b.setFixedSize(28, 26)
         self.btn_loop_b.setToolTip("Set loop out-point / stop loop  (key: O)")
         self.btn_loop_b.clicked.connect(self._set_loop_b)
         lay.addWidget(self.btn_loop_b)
