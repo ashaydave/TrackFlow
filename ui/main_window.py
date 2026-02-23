@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QFileDialog, QHeaderView, QProgressBar, QStatusBar, QSlider,
-    QMenu, QApplication, QComboBox, QInputDialog,
+    QMenu, QApplication, QComboBox, QInputDialog, QAbstractItemView,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint
 from PyQt6.QtGui import QColor, QAction, QKeyEvent
@@ -57,6 +57,59 @@ for _i in range(1, 13):
 def _camelot_sort_key(camelot: str) -> int:
     """Return integer sort key for a Camelot string (1A–12B). Unknown → 24."""
     return _CAMELOT_ORDER.get(camelot, 24)
+
+
+class DraggableLibraryTable(QTableWidget):
+    """Library table that drags the selected track's file path as text/plain MIME."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.setDefaultDropAction(Qt.DropAction.CopyAction)
+
+    def mimeData(self, items):
+        data = super().mimeData(items)
+        if items:
+            fp_item = self.item(items[0].row(), 0)
+            if fp_item:
+                fp = fp_item.data(Qt.ItemDataRole.UserRole)
+                if fp:
+                    data.setText(str(fp))
+        return data
+
+
+class PlaylistDropTable(QTableWidget):
+    """Playlist table that accepts file path drops from DraggableLibraryTable."""
+
+    file_dropped = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DropOnly)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasText():
+            fp = event.mimeData().text().strip()
+            if fp:
+                self.file_dropped.emit(fp)
+            event.acceptProposedAction()
+        else:
+            super().dropEvent(event)
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -234,7 +287,7 @@ class MainWindow(QMainWindow):
         header.setObjectName("section_header")
         lay.addWidget(header)
 
-        self.track_table = QTableWidget()
+        self.track_table = DraggableLibraryTable()
         self.track_table.setColumnCount(5)
         self.track_table.setHorizontalHeaderLabels(["Track", "BPM", "Key", "Nrg", "\u2713"])
         self.track_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -434,7 +487,7 @@ class MainWindow(QMainWindow):
         lay.addLayout(ctrl_row)
 
         # Playlist track table
-        self.playlist_table = QTableWidget()
+        self.playlist_table = PlaylistDropTable()
         self.playlist_table.setColumnCount(3)
         self.playlist_table.setHorizontalHeaderLabels(["Track", "BPM", "Key"])
         self.playlist_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -444,6 +497,11 @@ class MainWindow(QMainWindow):
         self.playlist_table.setAlternatingRowColors(True)
         self.playlist_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.playlist_table.customContextMenuRequested.connect(self._playlist_context_menu)
+        self.playlist_table.file_dropped.connect(
+            lambda fp: self._add_to_playlist(
+                fp, self.playlist_selector.currentText()
+            )
+        )
         self.playlist_table.verticalHeader().setDefaultSectionSize(22)
 
         ph = self.playlist_table.horizontalHeader()
