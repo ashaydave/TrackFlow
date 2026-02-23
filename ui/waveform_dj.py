@@ -157,7 +157,8 @@ class WaveformDataThread(QThread):
 class _BaseWaveform(QWidget):
     """Shared rendering for overview and main waveform panels."""
 
-    position_clicked = pyqtSignal(float)   # 0.0–1.0
+    position_clicked  = pyqtSignal(float)   # 0.0–1.0  — press or release (seeks audio)
+    position_dragging = pyqtSignal(float)   # 0.0–1.0  — move while held (visual only)
 
     def __init__(self, fixed_height: int, parent=None):
         super().__init__(parent)
@@ -282,19 +283,12 @@ class _BaseWaveform(QWidget):
             painter.drawRect(x, y_top, BAR_W, bar_h * 2)
 
     def _draw_waveform(self, painter: QPainter, w: int, h: int) -> None:
-        """Filled seamless waveform via vectorised numpy → QImage blit."""
+        """Filled seamless waveform via vectorised numpy → QImage blit (full track)."""
         data = self._data
         n    = len(data)
 
-        # ── Select zoom slice ─────────────────────────────────────────
-        bar_start = int(self._zoom_start * n)
-        bar_end   = max(bar_start + 1, min(n, int(self._zoom_end * n)))
-        n_in_view = bar_end - bar_start
-
-        # ── Map every pixel column → data index ──────────────────────
-        col_idx = np.round(
-            np.linspace(0, n_in_view - 1, w)
-        ).astype(np.int32) + bar_start
+        # ── Map every pixel column → data index (full track, no zoom) ─
+        col_idx = np.round(np.linspace(0, n - 1, w)).astype(np.int32)
         col_idx = np.clip(col_idx, 0, n - 1)
 
         amps = data[col_idx, 0].astype(np.float32)   # (w,)
@@ -302,20 +296,17 @@ class _BaseWaveform(QWidget):
         mid  = data[col_idx, 2].astype(np.float32)
         high = data[col_idx, 3].astype(np.float32)
 
-        # ── Vectorised colour mixing (same formula as _mix_color) ─────
+        # ── Vectorised colour mixing ───────────────────────────────────
         total      = bass + mid + high + 1e-9
-        brightness = 0.25 + 0.75 * amps              # (w,)
+        brightness = 0.25 + 0.75 * amps
 
         r_f = (255.0 * bass + 255.0 * mid +   0.0 * high) / total * brightness
         g_f = ( 50.0 * bass + 185.0 * mid + 200.0 * high) / total * brightness
         b_f = (  0.0 * bass +   0.0 * mid + 255.0 * high) / total * brightness
 
         # ── Dim played columns ────────────────────────────────────────
-        zoom_width  = max(1e-9, self._zoom_end - self._zoom_start)
-        playhead_x  = int(
-            max(0.0, (self._position - self._zoom_start) / zoom_width) * w
-        )
-        played_mask = np.arange(w) < playhead_x      # (w,) bool
+        playhead_x  = int(self._position * w)
+        played_mask = np.arange(w) < playhead_x
         dim         = np.where(played_mask, PLAYED_DIM, 1.0).astype(np.float32)
         r_u8 = np.clip(r_f * dim, 0, 255).astype(np.uint8)
         g_u8 = np.clip(g_f * dim, 0, 255).astype(np.uint8)
@@ -324,25 +315,19 @@ class _BaseWaveform(QWidget):
         # ── Bar heights ───────────────────────────────────────────────
         half_h      = h // 2
         bar_heights = np.maximum(1, (amps * half_h * 0.92).astype(np.int32))
-        y_tops      = np.maximum(0, half_h - bar_heights)   # (w,)
-        y_bots      = np.minimum(h, half_h + bar_heights)   # (w,)
+        y_tops      = np.maximum(0, half_h - bar_heights)
+        y_bots      = np.minimum(h, half_h + bar_heights)
 
         # ── Build RGB888 image array ──────────────────────────────────
-        img = np.empty((h, w, 3), dtype=np.uint8)
-        img[:, :, 0] = BG_R
-        img[:, :, 1] = BG_G
-        img[:, :, 2] = BG_B
-
-        # Vectorised fill via broadcasting: y_grid (h,1) vs y_tops/y_bots (1,w)
-        y_grid = np.arange(h, dtype=np.int32)[:, np.newaxis]   # (h, 1)
+        img    = np.empty((h, w, 3), dtype=np.uint8)
+        y_grid = np.arange(h, dtype=np.int32)[:, np.newaxis]          # (h, 1)
         mask   = (y_grid >= y_tops[np.newaxis, :]) & (y_grid < y_bots[np.newaxis, :])
-        # mask shape: (h, w) bool
 
         img[:, :, 0] = np.where(mask, r_u8[np.newaxis, :], BG_R)
         img[:, :, 1] = np.where(mask, g_u8[np.newaxis, :], BG_G)
         img[:, :, 2] = np.where(mask, b_u8[np.newaxis, :], BG_B)
 
-        # ── Blit to painter (img kept alive as local var) ─────────────
+        # ── Blit (img kept alive as local var) ────────────────────────
         qimg = QImage(img.data, w, h, w * 3, QImage.Format.Format_RGB888)
         painter.drawImage(0, 0, qimg)
 
@@ -438,10 +423,13 @@ class _BaseWaveform(QWidget):
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.MouseButton.LeftButton and self._data is not None:
-            click_frac = max(0.0, min(1.0, event.position().x() / self.width()))
-            zoom_width = self._zoom_end - self._zoom_start
-            pos = self._zoom_start + click_frac * zoom_width
-            self.position_clicked.emit(max(0.0, min(1.0, pos)))
+            pos = max(0.0, min(1.0, event.position().x() / self.width()))
+            self.position_dragging.emit(pos)   # visual update only — no audio seek
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._data is not None:
+            pos = max(0.0, min(1.0, event.position().x() / self.width()))
+            self.position_clicked.emit(pos)    # seek audio on release
 
     def setCursor(self, cursor):
         if self._data is not None:
@@ -452,16 +440,16 @@ class _BaseWaveform(QWidget):
 
 class WaveformDJ(QWidget):
     """
-    Container widget with overview + main waveform stacked vertically.
+    Single full-track waveform widget.
     Manages WaveformDataThread lifecycle — only one thread active at a time.
 
-    Usage:
-        waveform.set_waveform_from_file(path)   # starts background thread
-        waveform.set_playback_position(0.42)    # updates both panels
-        waveform.position_clicked -> float       # seek signal
+    Signals:
+        position_clicked(float)  — emitted on press or drag-release (seek audio)
+        position_dragging(float) — emitted during drag (visual update only)
     """
 
-    position_clicked = pyqtSignal(float)
+    position_clicked  = pyqtSignal(float)
+    position_dragging = pyqtSignal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -469,27 +457,19 @@ class WaveformDJ(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(0)
 
-        self.overview = _BaseWaveform(fixed_height=40)
-        self.main     = _BaseWaveform(fixed_height=120)
-        self._duration: float = 0.0
-
-        layout.addWidget(self.overview)
+        self.main = _BaseWaveform(fixed_height=160)
         layout.addWidget(self.main)
 
-        self.overview.position_clicked.connect(self.position_clicked)
         self.main.position_clicked.connect(self.position_clicked)
+        self.main.position_dragging.connect(self.position_dragging)
 
     def set_waveform_from_file(self, file_path: str) -> None:
         """Start background thread to compute waveform data."""
-        # Stop any running thread first
         if self._thread is not None and self._thread.isRunning():
             self._thread.stop_and_wait()
-
-        self.overview.clear()
         self.main.clear()
-
         self._thread = WaveformDataThread(file_path)
         self._thread.data_ready.connect(self._on_data_ready)
         self._thread.failed.connect(
@@ -498,34 +478,17 @@ class WaveformDJ(QWidget):
         self._thread.start()
 
     def _on_data_ready(self, data: np.ndarray) -> None:
-        self.overview.set_data(data)
         self.main.set_data(data)
 
     def set_playback_position(self, pos: float) -> None:
-        """Update playhead on both panels and recompute zoom for main."""
-        self.overview.set_position(pos)          # overview: no zoom, one update
-        if self._duration > 0:
-            window_frac = min(1.0, 30.0 / self._duration)
-            half  = window_frac / 2.0
-            start = max(0.0, pos - half)
-            end   = min(1.0, start + window_frac)
-            if end >= 1.0:
-                end   = 1.0
-                start = max(0.0, end - window_frac)
-            self.main.set_position_and_zoom(pos, start, end)   # ONE repaint
-        else:
-            self.main.set_position(pos)
+        """Update playhead position (0.0–1.0)."""
+        self.main.set_position(pos)
 
     def clear(self) -> None:
-        """Clear both panels and stop any running thread."""
+        """Clear waveform and stop any running thread."""
         if self._thread is not None and self._thread.isRunning():
             self._thread.stop_and_wait()
-        self.overview.clear()
         self.main.clear()
-
-    def set_duration(self, duration: float) -> None:
-        """Tell the waveform the track duration for zoom calculation."""
-        self._duration = max(0.0, duration)
 
     def update_cues_and_loop(
         self,
@@ -534,8 +497,6 @@ class WaveformDJ(QWidget):
         loop_b,
         loop_active: bool,
     ) -> None:
-        """Push hot cue + loop state to both panels."""
-        self.overview.set_hot_cues(cues)
+        """Push hot cue + loop state to waveform panel."""
         self.main.set_hot_cues(cues)
-        self.overview.set_loop(loop_a, loop_b, loop_active)
         self.main.set_loop(loop_a, loop_b, loop_active)

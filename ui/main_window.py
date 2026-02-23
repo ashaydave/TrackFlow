@@ -301,6 +301,7 @@ class MainWindow(QMainWindow):
 
         self.waveform = WaveformDJ()
         self.waveform.position_clicked.connect(self._on_waveform_clicked)
+        self.waveform.position_dragging.connect(self._on_waveform_dragging)
         lay.addWidget(self.waveform)
 
         # Player controls row
@@ -875,7 +876,6 @@ class MainWindow(QMainWindow):
 
         if self.audio_player.load(results['file_path']):
             self.audio_player.set_duration(results.get('duration', dur_sec))
-            self.waveform.set_duration(results.get('duration', dur_sec))
             self.waveform.set_waveform_from_file(results['file_path'])
             self._enable_controls(True)
             if was_playing:
@@ -942,6 +942,12 @@ class MainWindow(QMainWindow):
     def _on_waveform_clicked(self, pos: float):
         self.audio_player.seek(pos)
         self.waveform.set_playback_position(pos)
+
+    def _on_waveform_dragging(self, pos: float):
+        """Visual-only update during waveform drag — no audio seek."""
+        self.waveform.set_playback_position(pos)
+        if not self._seek_dragging and self.audio_player.duration > 0:
+            self.seek_slider.setValue(int(pos * self.seek_slider.maximum()))
 
     def _on_seek_released(self):
         self._seek_dragging = False
