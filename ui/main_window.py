@@ -738,18 +738,20 @@ class MainWindow(QMainWindow):
         lbl.setFixedWidth(30)
         lay.addWidget(lbl)
 
+        _loop_btn_style = "QPushButton { padding: 2px 4px; font-weight: bold; }"
         self.btn_loop_a = QPushButton("I")
         self.btn_loop_a.setFixedSize(28, 26)
+        self.btn_loop_a.setStyleSheet(_loop_btn_style)
         self.btn_loop_a.setToolTip("Set loop in-point  (key: I)")
         self.btn_loop_a.clicked.connect(self._set_loop_a)
         lay.addWidget(self.btn_loop_a)
 
         self.btn_loop_b = QPushButton("O")
         self.btn_loop_b.setFixedSize(28, 26)
+        self.btn_loop_b.setStyleSheet(_loop_btn_style)
         self.btn_loop_b.setToolTip("Set loop out-point / stop loop  (key: O)")
         self.btn_loop_b.clicked.connect(self._set_loop_b)
         lay.addWidget(self.btn_loop_b)
-
 
         sep = QLabel("|")
         sep.setObjectName("meta_text")
@@ -757,8 +759,8 @@ class MainWindow(QMainWindow):
         lay.addWidget(sep)
 
         _bar_snap_style = (
-            "QPushButton { background-color: #111830; border-color: #223355; }"
-            "QPushButton:hover { background-color: #1a2a50; border-color: #0088ff; color: #00ccff; }"
+            "QPushButton { background-color: #111830; border: 1px solid #223355; padding: 2px 4px; }"
+            "QPushButton:hover { background-color: #1a2a50; border: 1px solid #0088ff; color: #00ccff; }"
         )
         for label, bars in [("\u00bd", 0.5), ("1", 1.0), ("2", 2.0), ("4", 4.0), ("8", 8.0)]:
             btn = QPushButton(label)
@@ -963,12 +965,16 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_loop_buttons(self) -> None:
+        base_style = (
+            "QPushButton { padding: 2px 4px; font-weight: bold; }"
+        )
         amber_style = (
             "QPushButton {"
             "  background-color: rgba(255,185,0,140);"
             "  color: #FFB900;"
             "  font-weight: bold;"
             "  border: 1px solid rgba(255,185,0,180);"
+            "  padding: 2px 4px;"
             "}"
         )
         green_style = (
@@ -977,12 +983,13 @@ class MainWindow(QMainWindow):
             "  color: #00DC64;"
             "  font-weight: bold;"
             "  border: 1px solid rgba(0,220,100,200);"
+            "  padding: 2px 4px;"
             "}"
         )
         # IN button: amber when set
-        self.btn_loop_a.setStyleSheet(amber_style if self._loop_a is not None else "")
+        self.btn_loop_a.setStyleSheet(amber_style if self._loop_a is not None else base_style)
         # OUT button: green when actively looping, unlit otherwise
-        self.btn_loop_b.setStyleSheet(green_style if self._loop_active else "")
+        self.btn_loop_b.setStyleSheet(green_style if self._loop_active else base_style)
         # LOOP toggle: enabled only when both are set; green when looping
 
     def _load_hot_cues(self, file_path: str) -> None:
