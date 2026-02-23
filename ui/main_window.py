@@ -175,7 +175,7 @@ class HelpDialog(QDialog):
         shortcut_row("\u2190 / \u2192", "Seek \u22125 s / +5 s")
         shortcut_row("Shift+\u2190 / \u2192", "Seek \u221230 s / +30 s")
         shortcut_row("I", "Set loop in-point (A)")
-        shortcut_row("O", "Set loop out-point (B)")
+        shortcut_row("O", "Set loop out-point — auto-starts loop; press again to stop")
         shortcut_row("L", "Toggle loop on / off")
         shortcut_row("1 \u2013 6", "Jump to hot cue  (sets if empty)")
         shortcut_row("Shift+1 \u2013 6", "Clear hot cue")
@@ -851,22 +851,30 @@ class MainWindow(QMainWindow):
         self._loop_a = self.audio_player.get_position()
         self._loop_active = False
         self._loop_b = None
-        self.btn_loop_toggle.setEnabled(False)
         self._refresh_loop_buttons()
         self._refresh_waveform_overlays()
 
     def _set_loop_b(self) -> None:
         if not self.current_track:
             return
+        # Second press while looping → stop loop and clear OUT point
+        if self._loop_active and self._loop_b is not None:
+            self._loop_b = None
+            self._loop_active = False
+            self._refresh_loop_buttons()
+            self._refresh_waveform_overlays()
+            return
+        # First press: need IN point first
         if self._loop_a is None:
-            self._status.showMessage("Set loop A point first  (key: I)")
+            self._status.showMessage("Set loop IN point first  (key: I)")
             return
         pos = self.audio_player.get_position()
         if pos <= self._loop_a:
-            self._status.showMessage("Loop B must be after A.")
+            self._status.showMessage("Loop OUT must be after IN.")
             return
+        # Set OUT + auto-start loop
         self._loop_b = pos
-        self.btn_loop_toggle.setEnabled(True)
+        self._loop_active = True
         self._refresh_loop_buttons()
         self._refresh_waveform_overlays()
 
@@ -904,7 +912,7 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_loop_buttons(self) -> None:
-        active_style = (
+        amber_style = (
             "QPushButton {"
             "  background-color: rgba(255,185,0,140);"
             "  color: #FFB900;"
@@ -912,7 +920,7 @@ class MainWindow(QMainWindow):
             "  border: 1px solid rgba(255,185,0,180);"
             "}"
         )
-        toggle_style = (
+        green_style = (
             "QPushButton {"
             "  background-color: rgba(0,220,100,160);"
             "  color: #00DC64;"
@@ -920,12 +928,14 @@ class MainWindow(QMainWindow):
             "  border: 1px solid rgba(0,220,100,200);"
             "}"
         )
-        self.btn_loop_a.setStyleSheet(active_style if self._loop_a is not None else "")
-        self.btn_loop_b.setStyleSheet(active_style if self._loop_b is not None else "")
-        self.btn_loop_toggle.setEnabled(
-            self._loop_a is not None and self._loop_b is not None
-        )
-        self.btn_loop_toggle.setStyleSheet(toggle_style if self._loop_active else "")
+        # IN button: amber when set
+        self.btn_loop_a.setStyleSheet(amber_style if self._loop_a is not None else "")
+        # OUT button: green when actively looping, unlit otherwise
+        self.btn_loop_b.setStyleSheet(green_style if self._loop_active else "")
+        # LOOP toggle: enabled only when both are set; green when looping
+        both_set = self._loop_a is not None and self._loop_b is not None
+        self.btn_loop_toggle.setEnabled(both_set)
+        self.btn_loop_toggle.setStyleSheet(green_style if self._loop_active else "")
 
     def _load_hot_cues(self, file_path: str) -> None:
         """Load saved cues for this track from disk."""
