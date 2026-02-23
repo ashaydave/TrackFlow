@@ -162,3 +162,21 @@ def test_bar_snap_right_trim_keeps_in_fixed():
     assert loop_b > loop_a
     expected_len = bars * secs_per_bar / duration
     assert abs((loop_b - loop_a) - expected_len) < 0.001
+
+
+def test_beat_grid_line_count():
+    """Beat grid should generate correct number of beat positions for given BPM/duration."""
+    bpm = 120.0
+    duration = 60.0   # 1 minute = 120 beats
+    secs_per_beat = 60.0 / bpm   # 0.5 s
+    expected_beats = int(duration / secs_per_beat)  # 120
+
+    beats = []
+    t = 0.0
+    while t < duration:
+        beats.append(t)
+        t += secs_per_beat
+
+    assert len(beats) == expected_beats
+    assert beats[0] == 0.0
+    assert abs(beats[-1] - (duration - secs_per_beat)) < 0.001

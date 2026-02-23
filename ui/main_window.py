@@ -1220,6 +1220,7 @@ class MainWindow(QMainWindow):
         if self.audio_player.load(results['file_path']):
             self.audio_player.set_duration(results.get('duration', dur_sec))
             self.waveform.set_waveform_from_file(results['file_path'])
+            self.waveform.set_beat_grid(float(bpm) if bpm else None, float(dur_sec))
             self._enable_controls(True)
             if was_playing:
                 self.audio_player.play()

@@ -172,6 +172,7 @@ class _BaseWaveform(QWidget):
         self._loop_a: float | None = None
         self._loop_b: float | None = None
         self._loop_active: bool = False
+        self._beat_grid: tuple | None = None   # (bpm: float, duration: float)
 
     def set_data(self, data: np.ndarray) -> None:
         self._data = data
@@ -210,6 +211,33 @@ class _BaseWaveform(QWidget):
         self._loop_active = active
         self.update()
 
+    def set_beat_grid(self, bpm: float | None, duration: float) -> None:
+        """Set BPM + duration so beat/bar lines can be painted on the waveform."""
+        if bpm and bpm > 0 and duration > 0:
+            self._beat_grid = (float(bpm), float(duration))
+        else:
+            self._beat_grid = None
+        self.update()
+
+    def _draw_beat_grid(self, painter: QPainter, w: int, h: int) -> None:
+        """Draw semi-transparent beat (thin) and bar (full-height) tick marks."""
+        if self._beat_grid is None:
+            return
+        bpm, duration = self._beat_grid
+        secs_per_beat = 60.0 / bpm
+        beat = 0
+        t = 0.0
+        while t < duration:
+            x = int((t / duration) * w)
+            is_bar = (beat % 4 == 0)
+            alpha  = 55 if is_bar else 20
+            ht     = h  if is_bar else h // 2
+            y_top  = (h - ht) // 2
+            painter.setPen(QPen(QColor(255, 255, 255, alpha), 1))
+            painter.drawLine(x, y_top, x, y_top + ht)
+            beat += 1
+            t    += secs_per_beat
+
     # ── Paint ─────────────────────────────────────────────────────────────
 
     def paintEvent(self, event):
@@ -230,6 +258,7 @@ class _BaseWaveform(QWidget):
             return
 
         self._draw_waveform(painter, w, h)
+        self._draw_beat_grid(painter, w, h)
         self._draw_loop_region(painter, w, h)
         self._draw_cue_markers(painter, w, h)
         self._draw_playhead(painter, w, h)
@@ -500,3 +529,7 @@ class WaveformDJ(QWidget):
         """Push hot cue + loop state to waveform panel."""
         self.main.set_hot_cues(cues)
         self.main.set_loop(loop_a, loop_b, loop_active)
+
+    def set_beat_grid(self, bpm: float | None, duration: float) -> None:
+        """Forward BPM/duration to the base waveform for beat-grid painting."""
+        self.main.set_beat_grid(bpm, duration)
