@@ -58,3 +58,36 @@ def test_main_window_imports_cleanly():
     from ui.main_window import MainWindow, PlayerState
     assert MainWindow is not None
     assert PlayerState is not None
+
+def test_waveform_zoom_bounds_clamping():
+    """Zoom window must clamp to [0, 1] and handle short tracks."""
+    # Simulate the zoom calculation logic from WaveformDJ.set_playback_position
+    def compute_zoom(pos, duration, window_secs=30.0):
+        if duration <= 0:
+            return (0.0, 1.0)
+        window_frac = min(1.0, window_secs / duration)
+        half = window_frac / 2.0
+        start = max(0.0, pos - half)
+        end = min(1.0, start + window_frac)
+        if end >= 1.0:
+            end = 1.0
+            start = max(0.0, end - window_frac)
+        return (start, end)
+
+    # Middle of a 5-min track: window should be symmetric
+    s, e = compute_zoom(0.5, 300.0)
+    assert abs((e - s) - 30.0 / 300.0) < 0.001
+
+    # Near start: clamp to 0
+    s, e = compute_zoom(0.0, 300.0)
+    assert s == 0.0
+    assert e == pytest.approx(30.0 / 300.0)
+
+    # Near end: clamp to 1
+    s, e = compute_zoom(1.0, 300.0)
+    assert e == 1.0
+
+    # Short track < 30s: show full track
+    s, e = compute_zoom(0.5, 20.0)
+    assert s == 0.0
+    assert e == 1.0

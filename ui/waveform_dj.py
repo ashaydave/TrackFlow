@@ -164,6 +164,12 @@ class _BaseWaveform(QWidget):
         self.setMouseTracking(True)
         self._data: np.ndarray | None = None   # shape (N, 4)
         self._position: float = 0.0
+        self._zoom_start: float = 0.0
+        self._zoom_end: float = 1.0
+        self._hot_cues: list = [None] * 6   # each: None or {'position': float, 'color': QColor}
+        self._loop_a: float | None = None
+        self._loop_b: float | None = None
+        self._loop_active: bool = False
 
     def set_data(self, data: np.ndarray) -> None:
         self._data = data
@@ -176,6 +182,23 @@ class _BaseWaveform(QWidget):
     def clear(self) -> None:
         self._data = None
         self._position = 0.0
+        self.update()
+
+    def set_zoom(self, start: float, end: float) -> None:
+        """Set visible fraction of track (0.0–1.0). Full track: 0.0, 1.0."""
+        self._zoom_start = max(0.0, min(1.0, start))
+        self._zoom_end = max(self._zoom_start + 0.001, min(1.0, end))
+        self.update()
+
+    def set_hot_cues(self, cues: list) -> None:
+        """cues: list of 6 items, each None or {'position': float, 'color': QColor}."""
+        self._hot_cues = cues
+        self.update()
+
+    def set_loop(self, a, b, active: bool) -> None:
+        self._loop_a = a
+        self._loop_b = b
+        self._loop_active = active
         self.update()
 
     # ── Paint ─────────────────────────────────────────────────────────────
@@ -198,21 +221,37 @@ class _BaseWaveform(QWidget):
             return
 
         self._draw_bars(painter, w, h)
+        self._draw_loop_region(painter, w, h)
+        self._draw_cue_markers(painter, w, h)
         self._draw_playhead(painter, w, h)
 
     def _draw_bars(self, painter: QPainter, w: int, h: int) -> None:
         data = self._data
         n = len(data)
-        step = BAR_W + GAP                  # 3 pixels per bar slot
-        n_visible = min(n, w // step)
+
+        # Zoom: select which bars are visible
+        bar_start = int(self._zoom_start * n)
+        bar_end   = int(self._zoom_end   * n)
+        bar_end   = max(bar_start + 1, min(n, bar_end))
+        n_in_view = bar_end - bar_start
+
+        step = BAR_W + GAP
+        n_visible = min(n_in_view, w // step)
+        if n_visible < 1:
+            return
+
         half_h = h / 2.0
-        playhead_x = int(self._position * w)
+        zoom_width = max(1e-9, self._zoom_end - self._zoom_start)
+        playhead_x = int(
+            max(0.0, (self._position - self._zoom_start) / zoom_width) * w
+        )
 
         painter.setPen(Qt.PenStyle.NoPen)
 
         for i in range(n_visible):
             x = i * step
-            bar_idx = int(i * n / n_visible)
+            bar_idx = bar_start + int(i * n_in_view / n_visible)
+            bar_idx = min(n - 1, bar_idx)
             amp, bass, mid, high = (
                 float(data[bar_idx, 0]),
                 float(data[bar_idx, 1]),
@@ -223,7 +262,6 @@ class _BaseWaveform(QWidget):
             bar_h = max(2, int(amp * half_h * 0.92))
             color = _mix_color(amp, bass, mid, high)
 
-            # Darken played portion
             if x < playhead_x:
                 color = QColor(
                     int(color.red()   * PLAYED_DIM),
@@ -232,9 +270,68 @@ class _BaseWaveform(QWidget):
                 )
 
             painter.setBrush(QBrush(color))
-            # Mirrored: draw from center upward and downward
             y_top = int(half_h) - bar_h
             painter.drawRect(x, y_top, BAR_W, bar_h * 2)
+
+    def _draw_loop_region(self, painter: QPainter, w: int, h: int) -> None:
+        """Draw semi-transparent loop region between A and B points."""
+        if self._loop_a is None and self._loop_b is None:
+            return
+        zoom_width = max(1e-9, self._zoom_end - self._zoom_start)
+
+        a_norm = self._loop_a if self._loop_a is not None else self._loop_b
+        b_norm = self._loop_b if self._loop_b is not None else self._loop_a
+
+        a_x = int(max(0.0, (a_norm - self._zoom_start) / zoom_width) * w)
+        b_x = int(max(0.0, (b_norm - self._zoom_start) / zoom_width) * w)
+        a_x = max(0, min(w, a_x))
+        b_x = max(0, min(w, b_x))
+        if a_x > b_x:
+            a_x, b_x = b_x, a_x
+
+        if b_x - a_x >= 1:
+            fill = QColor(0, 220, 100, 50) if self._loop_active else QColor(255, 185, 0, 40)
+            painter.fillRect(a_x, 0, b_x - a_x, h, fill)
+
+        line_color = (QColor(0, 220, 100, 200) if self._loop_active
+                      else QColor(255, 185, 0, 200))
+        painter.setPen(QPen(line_color, 1))
+        if self._loop_a is not None:
+            painter.drawLine(a_x, 0, a_x, h)
+        if self._loop_b is not None:
+            painter.drawLine(b_x, 0, b_x, h)
+
+    def _draw_cue_markers(self, painter: QPainter, w: int, h: int) -> None:
+        """Draw colored tick marks for set hot cues."""
+        zoom_width = max(1e-9, self._zoom_end - self._zoom_start)
+        for i, cue in enumerate(self._hot_cues):
+            if cue is None:
+                continue
+            pos = cue['position']
+            if not (self._zoom_start - 0.001 <= pos <= self._zoom_end + 0.001):
+                continue
+            x = int((pos - self._zoom_start) / zoom_width * w)
+            x = max(0, min(w - 1, x))
+            color = cue['color']
+
+            painter.setPen(QPen(color, 2))
+            painter.drawLine(x, 0, x, h)
+
+            badge = 13
+            painter.setBrush(QBrush(color))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRect(x - badge // 2, 0, badge, badge)
+
+            painter.setPen(QPen(QColor(0, 0, 0)))
+            font = painter.font()
+            font.setPointSize(7)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(
+                x - badge // 2, 0, badge, badge,
+                Qt.AlignmentFlag.AlignCenter,
+                str(i + 1),
+            )
 
     def _draw_playhead(self, painter: QPainter, w: int, h: int) -> None:
         if self._position <= 0.0:
@@ -260,7 +357,10 @@ class _BaseWaveform(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._data is not None:
-            pos = max(0.0, min(1.0, event.position().x() / self.width()))
+            click_frac = max(0.0, min(1.0, event.position().x() / self.width()))
+            zoom_width = self._zoom_end - self._zoom_start
+            pos = self._zoom_start + click_frac * zoom_width
+            pos = max(0.0, min(1.0, pos))
             self.position_clicked.emit(pos)
 
     def setCursor(self, cursor):
@@ -291,8 +391,9 @@ class WaveformDJ(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        self.overview = _BaseWaveform(fixed_height=50)
-        self.main     = _BaseWaveform(fixed_height=130)
+        self.overview = _BaseWaveform(fixed_height=40)
+        self.main     = _BaseWaveform(fixed_height=120)
+        self._duration: float = 0.0
 
         layout.addWidget(self.overview)
         layout.addWidget(self.main)
@@ -321,9 +422,18 @@ class WaveformDJ(QWidget):
         self.main.set_data(data)
 
     def set_playback_position(self, pos: float) -> None:
-        """Update playhead on both panels (0.0–1.0)."""
+        """Update playhead on both panels and recompute zoom for main."""
         self.overview.set_position(pos)
         self.main.set_position(pos)
+        if self._duration > 0:
+            window_frac = min(1.0, 30.0 / self._duration)
+            half = window_frac / 2.0
+            start = max(0.0, pos - half)
+            end   = min(1.0, start + window_frac)
+            if end >= 1.0:
+                end   = 1.0
+                start = max(0.0, end - window_frac)
+            self.main.set_zoom(start, end)
 
     def clear(self) -> None:
         """Clear both panels and stop any running thread."""
@@ -331,3 +441,20 @@ class WaveformDJ(QWidget):
             self._thread.stop_and_wait()
         self.overview.clear()
         self.main.clear()
+
+    def set_duration(self, duration: float) -> None:
+        """Tell the waveform the track duration for zoom calculation."""
+        self._duration = max(0.0, duration)
+
+    def update_cues_and_loop(
+        self,
+        cues: list,
+        loop_a,
+        loop_b,
+        loop_active: bool,
+    ) -> None:
+        """Push hot cue + loop state to both panels."""
+        self.overview.set_hot_cues(cues)
+        self.main.set_hot_cues(cues)
+        self.overview.set_loop(loop_a, loop_b, loop_active)
+        self.main.set_loop(loop_a, loop_b, loop_active)
