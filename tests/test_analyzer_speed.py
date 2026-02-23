@@ -86,6 +86,30 @@ def test_waveform_n_bars_increased():
     from ui.waveform_dj import WaveformDataThread
     assert WaveformDataThread.N_BARS >= 1200
 
+def test_loop_bar_snap_calculation():
+    """Bar snap must correctly compute A/B positions from BPM."""
+    bpm = 128.0
+    duration = 240.0     # 4 minutes
+
+    secs_per_bar = 4.0 * 60.0 / bpm   # = 1.875 s
+
+    # Snap to 4 bars from position 0.2 (= 48s into 240s track)
+    cur_secs = 0.2 * duration          # 48.0s
+    bars = 4
+    bar_num = round(cur_secs / secs_per_bar)
+    a_secs = bar_num * secs_per_bar
+    b_secs = min(a_secs + bars * secs_per_bar, duration)
+
+    a_pos = a_secs / duration
+    b_pos = b_secs / duration
+
+    assert 0.0 <= a_pos <= 1.0
+    assert 0.0 <= b_pos <= 1.0
+    assert b_pos > a_pos
+    expected_len = bars * secs_per_bar / duration
+    assert abs((b_pos - a_pos) - expected_len) < 0.001
+
+
 def test_waveform_zoom_bounds_clamping():
     """Zoom window must clamp to [0, 1] and handle short tracks."""
     # Simulate the zoom calculation logic from WaveformDJ.set_playback_position

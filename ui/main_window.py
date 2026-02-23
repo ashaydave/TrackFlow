@@ -136,6 +136,9 @@ class MainWindow(QMainWindow):
         self._seek_dragging = False
         self._playlists: list = []   # list of {"name": str, "tracks": [str]}
         self._hot_cues: list = [None] * 6   # each: None or {'position': float (0-1)}
+        self._loop_a: float | None = None
+        self._loop_b: float | None = None
+        self._loop_active: bool = False
 
         self.audio_player = AudioPlayer()
         self.audio_player.position_changed.connect(self._on_position_changed)
@@ -340,6 +343,7 @@ class MainWindow(QMainWindow):
         controls_row.addWidget(self.lbl_time)
 
         lay.addWidget(self._build_hot_cue_row())
+        lay.addWidget(self._build_loop_row())
         lay.addLayout(controls_row)
 
         # Connect player controls
@@ -478,6 +482,52 @@ class MainWindow(QMainWindow):
         lay.addStretch()
         return row_widget
 
+    def _build_loop_row(self) -> QWidget:
+        """Build the A-B loop + bar-snap control row."""
+        row_widget = QWidget()
+        lay = QHBoxLayout(row_widget)
+        lay.setContentsMargins(0, 0, 0, 2)
+        lay.setSpacing(4)
+
+        lbl = QLabel("LOOP")
+        lbl.setObjectName("meta_text")
+        lbl.setFixedWidth(30)
+        lay.addWidget(lbl)
+
+        self.btn_loop_a = QPushButton("A")
+        self.btn_loop_a.setFixedSize(32, 26)
+        self.btn_loop_a.setToolTip("Set loop in-point  (key: I)")
+        self.btn_loop_a.clicked.connect(self._set_loop_a)
+        lay.addWidget(self.btn_loop_a)
+
+        self.btn_loop_b = QPushButton("B")
+        self.btn_loop_b.setFixedSize(32, 26)
+        self.btn_loop_b.setToolTip("Set loop out-point  (key: O)")
+        self.btn_loop_b.clicked.connect(self._set_loop_b)
+        lay.addWidget(self.btn_loop_b)
+
+        self.btn_loop_toggle = QPushButton("\u27f3 LOOP")
+        self.btn_loop_toggle.setFixedSize(76, 26)
+        self.btn_loop_toggle.setToolTip("Toggle loop on/off  (key: L)")
+        self.btn_loop_toggle.setEnabled(False)
+        self.btn_loop_toggle.clicked.connect(self._toggle_loop)
+        lay.addWidget(self.btn_loop_toggle)
+
+        sep = QLabel("|")
+        sep.setObjectName("meta_text")
+        sep.setFixedWidth(10)
+        lay.addWidget(sep)
+
+        for label, bars in [("\u00bd", 0.5), ("1", 1.0), ("2", 2.0), ("4", 4.0), ("8", 8.0)]:
+            btn = QPushButton(label)
+            btn.setFixedSize(28, 26)
+            btn.setToolTip(f"Snap loop to {label} bar(s) from nearest beat")
+            btn.clicked.connect(lambda checked, b=bars: self._snap_loop(b))
+            lay.addWidget(btn)
+
+        lay.addStretch()
+        return row_widget
+
     def _make_card(self, label_text: str, value_text: str, value_style: str) -> tuple:
         """Return (card_widget, value_label)."""
         card = QWidget()
@@ -596,6 +646,88 @@ class MainWindow(QMainWindow):
         loop_b      = getattr(self, '_loop_b',      None)
         loop_active = getattr(self, '_loop_active', False)
         self.waveform.update_cues_and_loop(cues_data, loop_a, loop_b, loop_active)
+
+    def _set_loop_a(self) -> None:
+        if not self.current_track:
+            return
+        self._loop_a = self.audio_player.get_position()
+        self._loop_active = False
+        self._loop_b = None
+        self.btn_loop_toggle.setEnabled(False)
+        self._refresh_loop_buttons()
+        self._refresh_waveform_overlays()
+
+    def _set_loop_b(self) -> None:
+        if not self.current_track:
+            return
+        if self._loop_a is None:
+            self._status.showMessage("Set loop A point first  (key: I)")
+            return
+        pos = self.audio_player.get_position()
+        if pos <= self._loop_a:
+            self._status.showMessage("Loop B must be after A.")
+            return
+        self._loop_b = pos
+        self.btn_loop_toggle.setEnabled(True)
+        self._refresh_loop_buttons()
+        self._refresh_waveform_overlays()
+
+    def _toggle_loop(self) -> None:
+        if self._loop_a is None or self._loop_b is None:
+            return
+        self._loop_active = not self._loop_active
+        self._refresh_loop_buttons()
+        self._refresh_waveform_overlays()
+
+    def _snap_loop(self, bars: float) -> None:
+        if not self.current_track:
+            return
+        bpm = self.current_track.get('bpm')
+        if not bpm:
+            self._status.showMessage("Analyze track first to get BPM for bar snap.")
+            return
+        total = self.current_track.get('duration', 0)
+        if total <= 0:
+            return
+        secs_per_bar = 4.0 * 60.0 / float(bpm)
+        cur_secs = self.audio_player.get_position() * total
+        bar_num = round(cur_secs / secs_per_bar)
+        a_secs = bar_num * secs_per_bar
+        b_secs = min(a_secs + bars * secs_per_bar, total)
+        self._loop_a = a_secs / total
+        self._loop_b = b_secs / total
+        self._loop_active = True
+        self.btn_loop_toggle.setEnabled(True)
+        self._refresh_loop_buttons()
+        self._refresh_waveform_overlays()
+        label = "\u00bd" if bars == 0.5 else str(int(bars))
+        self._status.showMessage(
+            f"Loop: {label} bar(s) · {a_secs:.2f}s → {b_secs:.2f}s"
+        )
+
+    def _refresh_loop_buttons(self) -> None:
+        active_style = (
+            "QPushButton {"
+            "  background-color: rgba(255,185,0,140);"
+            "  color: #FFB900;"
+            "  font-weight: bold;"
+            "  border: 1px solid rgba(255,185,0,180);"
+            "}"
+        )
+        toggle_style = (
+            "QPushButton {"
+            "  background-color: rgba(0,220,100,160);"
+            "  color: #00DC64;"
+            "  font-weight: bold;"
+            "  border: 1px solid rgba(0,220,100,200);"
+            "}"
+        )
+        self.btn_loop_a.setStyleSheet(active_style if self._loop_a is not None else "")
+        self.btn_loop_b.setStyleSheet(active_style if self._loop_b is not None else "")
+        self.btn_loop_toggle.setEnabled(
+            self._loop_a is not None and self._loop_b is not None
+        )
+        self.btn_loop_toggle.setStyleSheet(toggle_style if self._loop_active else "")
 
     def _load_hot_cues(self, file_path: str) -> None:
         """Load saved cues for this track from disk."""
@@ -870,6 +1002,12 @@ class MainWindow(QMainWindow):
         self._refresh_cue_buttons()
         self._refresh_waveform_overlays()
 
+        # Reset loop state for new track
+        self._loop_a = None
+        self._loop_b = None
+        self._loop_active = False
+        self._refresh_loop_buttons()
+
         # Load audio + waveform
         # Capture playing state BEFORE load() calls stop() internally
         was_playing = (self.audio_player.state == PlayerState.PLAYING)
@@ -924,6 +1062,13 @@ class MainWindow(QMainWindow):
 
     def _on_position_changed(self, pos: float):
         self.waveform.set_playback_position(pos)
+        # Loop playback
+        if (self._loop_active
+                and self._loop_a is not None
+                and self._loop_b is not None
+                and pos >= self._loop_b):
+            self.audio_player.seek(self._loop_a)
+            return
         if not self._seek_dragging:
             self.seek_slider.setValue(int(pos * self.seek_slider.maximum()))
         if self.current_track:
