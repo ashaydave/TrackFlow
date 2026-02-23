@@ -191,3 +191,16 @@ def test_multi_delete_collects_unique_rows():
     items = [FakeItem(r) for r in [0, 0, 0, 1, 1, 1, 2, 2, 2]]
     unique_rows = sorted({item.row() for item in items}, reverse=True)
     assert unique_rows == [2, 1, 0]
+
+
+def test_low_bitrate_flag_threshold():
+    """Tracks below 320 kbps should be flagged; 320+ should not."""
+    def should_flag(bitrate):
+        return bitrate is not None and bitrate > 0 and bitrate < 320
+
+    assert should_flag(128)  is True
+    assert should_flag(256)  is True
+    assert should_flag(319)  is True
+    assert should_flag(320)  is False
+    assert should_flag(0)    is False
+    assert should_flag(None) is False

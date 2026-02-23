@@ -1153,6 +1153,16 @@ class MainWindow(QMainWindow):
 
         # Status ✓
         self.track_table.setItem(row, 4, QTableWidgetItem("\u2713"))
+
+        # Low-bitrate flag: mark tracks below 320 kbps in orange
+        ai = results.get('audio_info', {})
+        br = ai.get('bitrate', 0)
+        name_item = self.track_table.item(row, 0)
+        if name_item and br and 0 < br < 320:
+            stem = Path(file_path).stem
+            name_item.setText(f"⚑ {stem}")
+            name_item.setForeground(QColor("#FF8C00"))
+            name_item.setToolTip(f"Low bitrate: {br} kbps (< 320 kbps)\n{file_path}")
         self._highlight_row(row, ROW_DONE)
 
     def _highlight_row(self, row: int, color: QColor):
