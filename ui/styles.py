@@ -249,6 +249,17 @@ QLabel#help_key {
     color: #00ccff;
     padding: 1px 0;
 }
+QPushButton#btn_help {
+    background-color: rgba(0, 136, 255, 60);
+    border-color: #0088ff;
+    color: #00ccff;
+    font-weight: 700;
+    font-size: 15px;
+}
+QPushButton#btn_help:hover {
+    background-color: rgba(0, 204, 255, 120);
+    border-color: #00ccff;
+}
 
 /* ─── Info Cards ────────────────────────────────────────── */
 QWidget#info_card {
