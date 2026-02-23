@@ -381,6 +381,8 @@ class MainWindow(QMainWindow):
         self.batch_progress.setVisible(False)
         lay.addWidget(self.batch_progress)
 
+        lay.addStretch()   # push search + ? to right edge
+
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search tracks\u2026")
         self.search_box.setFixedHeight(32)
@@ -393,8 +395,6 @@ class MainWindow(QMainWindow):
         btn_help.setToolTip("Help / keyboard shortcuts  (F1)")
         btn_help.clicked.connect(self._show_help)
         lay.addWidget(btn_help)
-
-        lay.addStretch()
 
         # Connections
         self.btn_load_track.clicked.connect(self._load_single_track)
