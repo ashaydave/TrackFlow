@@ -236,7 +236,7 @@ class _BaseWaveform(QWidget):
         n_in_view = bar_end - bar_start
 
         step = BAR_W + GAP
-        n_visible = min(n_in_view, w // step)
+        n_visible = w // step   # always fill widget; bars repeat when zoomed in far
         if n_visible < 1:
             return
 
