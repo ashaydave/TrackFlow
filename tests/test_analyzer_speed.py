@@ -59,6 +59,28 @@ def test_main_window_imports_cleanly():
     assert MainWindow is not None
     assert PlayerState is not None
 
+import tempfile, json as _json
+from pathlib import Path as _Path
+
+def test_hot_cues_json_roundtrip(tmp_path):
+    """Hot cues dict should survive JSON round-trip."""
+    cues_file = tmp_path / 'hot_cues.json'
+    track_key = '/music/track.mp3'
+    cues = [None, {'position': 0.24}, None, {'position': 0.51}, None, None]
+
+    # Save
+    cues_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(cues_file, 'w') as f:
+        _json.dump({track_key: cues}, f)
+
+    # Load
+    with open(cues_file) as f:
+        loaded = _json.load(f)
+
+    assert loaded[track_key][1] == {'position': 0.24}
+    assert loaded[track_key][3] == {'position': 0.51}
+    assert loaded[track_key][0] is None
+
 def test_waveform_zoom_bounds_clamping():
     """Zoom window must clamp to [0, 1] and handle short tracks."""
     # Simulate the zoom calculation logic from WaveformDJ.set_playback_position

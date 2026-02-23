@@ -36,6 +36,16 @@ ROW_DONE      = QColor(15,  15,  28)
 
 AUDIO_EXTS = {'.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aiff', '.aif'}
 PLAYLISTS_FILE = Path(__file__).parent.parent / 'data' / 'playlists.json'
+HOT_CUES_FILE  = Path(__file__).parent.parent / 'data' / 'hot_cues.json'
+
+HOT_CUE_COLORS = [
+    QColor(255, 107,   0),   # 1 — Orange
+    QColor(  0, 200, 255),   # 2 — Cyan
+    QColor(  0, 220, 100),   # 3 — Green
+    QColor(255,   0, 136),   # 4 — Pink
+    QColor(255, 215,   0),   # 5 — Yellow
+    QColor(170,  68, 255),   # 6 — Purple
+]
 
 # ── Camelot sort order (1A=0, 1B=1, 2A=2, … 12B=23, unknown=24) ──────────────
 _CAMELOT_ORDER: dict = {}
@@ -125,6 +135,7 @@ class MainWindow(QMainWindow):
         self._row_map: dict = {}   # file_path (str) -> table row index (int)
         self._seek_dragging = False
         self._playlists: list = []   # list of {"name": str, "tracks": [str]}
+        self._hot_cues: list = [None] * 6   # each: None or {'position': float (0-1)}
 
         self.audio_player = AudioPlayer()
         self.audio_player.position_changed.connect(self._on_position_changed)
@@ -327,6 +338,7 @@ class MainWindow(QMainWindow):
         self.lbl_time.setObjectName("time_display")
         controls_row.addWidget(self.lbl_time)
 
+        lay.addWidget(self._build_hot_cue_row())
         lay.addLayout(controls_row)
 
         # Connect player controls
@@ -437,6 +449,34 @@ class MainWindow(QMainWindow):
 
         return panel
 
+    def _build_hot_cue_row(self) -> QWidget:
+        """Build the 6-button hot cue row."""
+        row_widget = QWidget()
+        lay = QHBoxLayout(row_widget)
+        lay.setContentsMargins(0, 2, 0, 0)
+        lay.setSpacing(4)
+
+        lbl = QLabel("CUE")
+        lbl.setObjectName("meta_text")
+        lbl.setFixedWidth(30)
+        lay.addWidget(lbl)
+
+        self._cue_buttons: list = []
+        for i in range(6):
+            btn = QPushButton(str(i + 1))
+            btn.setFixedSize(44, 26)
+            btn.setToolTip(f"Set cue {i + 1}  (key: {i + 1})")
+            btn.clicked.connect(lambda checked, idx=i: self._on_cue_clicked(idx))
+            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            btn.customContextMenuRequested.connect(
+                lambda pos, idx=i: self._cue_context_menu(idx, pos)
+            )
+            self._cue_buttons.append(btn)
+            lay.addWidget(btn)
+
+        lay.addStretch()
+        return row_widget
+
     def _make_card(self, label_text: str, value_text: str, value_style: str) -> tuple:
         """Return (card_widget, value_label)."""
         card = QWidget()
@@ -485,6 +525,107 @@ class MainWindow(QMainWindow):
                 json.dump({'playlists': self._playlists}, f, indent=2)
         except Exception as e:
             print(f"Could not save playlists: {e}")
+
+    # ------------------------------------------------------------------
+    # Hot cues
+    # ------------------------------------------------------------------
+
+    def _on_cue_clicked(self, idx: int) -> None:
+        if not self.current_track:
+            return
+        if self._hot_cues[idx] is None:
+            pos = self.audio_player.get_position()
+            self._hot_cues[idx] = {'position': pos}
+            self._save_hot_cues()
+            self._refresh_cue_buttons()
+            self._refresh_waveform_overlays()
+            self._status.showMessage(f"Cue {idx + 1} set at {pos:.1%}")
+        else:
+            self.audio_player.seek(self._hot_cues[idx]['position'])
+
+    def _cue_context_menu(self, idx: int, pos) -> None:
+        if self._hot_cues[idx] is None:
+            return
+        menu = QMenu(self)
+        action_clear = menu.addAction(f"Clear cue {idx + 1}")
+        btn = self._cue_buttons[idx]
+        action = menu.exec(btn.mapToGlobal(pos))
+        if action == action_clear:
+            self._hot_cues[idx] = None
+            self._save_hot_cues()
+            self._refresh_cue_buttons()
+            self._refresh_waveform_overlays()
+
+    def _refresh_cue_buttons(self) -> None:
+        for i, (btn, cue) in enumerate(zip(self._cue_buttons, self._hot_cues)):
+            color = HOT_CUE_COLORS[i]
+            if cue is None:
+                btn.setStyleSheet("")
+                btn.setToolTip(f"Set cue {i + 1}  (key: {i + 1})")
+            else:
+                r, g, b = color.red(), color.green(), color.blue()
+                btn.setStyleSheet(
+                    f"QPushButton {{"
+                    f"  background-color: rgba({r},{g},{b},140);"
+                    f"  color: rgb({r},{g},{b});"
+                    f"  font-weight: bold;"
+                    f"  border: 1px solid rgba({r},{g},{b},180);"
+                    f"}}"
+                    f"QPushButton:hover {{"
+                    f"  background-color: rgba({r},{g},{b},220);"
+                    f"}}"
+                )
+                btn.setToolTip(
+                    f"Jump to cue {i + 1}  (key: {i + 1}) · Right-click to clear"
+                )
+
+    def _refresh_waveform_overlays(self) -> None:
+        """Push current cue + loop state to both waveform panels."""
+        cues_data = []
+        for i, cue in enumerate(self._hot_cues):
+            if cue is not None:
+                cues_data.append({
+                    'position': cue['position'],
+                    'color':    HOT_CUE_COLORS[i],
+                })
+            else:
+                cues_data.append(None)
+        # _loop_a/_loop_b/_loop_active added by Task 4; guard with getattr for now
+        loop_a      = getattr(self, '_loop_a',      None)
+        loop_b      = getattr(self, '_loop_b',      None)
+        loop_active = getattr(self, '_loop_active', False)
+        self.waveform.update_cues_and_loop(cues_data, loop_a, loop_b, loop_active)
+
+    def _load_hot_cues(self, file_path: str) -> None:
+        """Load saved cues for this track from disk."""
+        self._hot_cues = [None] * 6
+        try:
+            if HOT_CUES_FILE.exists():
+                with open(HOT_CUES_FILE) as f:
+                    data = json.load(f)
+                saved = data.get(file_path, [None] * 6)
+                for i, c in enumerate(saved[:6]):
+                    if isinstance(c, dict) and 'position' in c:
+                        self._hot_cues[i] = {'position': float(c['position'])}
+        except Exception as e:
+            print(f"Could not load hot cues: {e}")
+
+    def _save_hot_cues(self) -> None:
+        """Persist current track's cues to disk."""
+        if not self.current_track:
+            return
+        fp = self.current_track['file_path']
+        try:
+            HOT_CUES_FILE.parent.mkdir(parents=True, exist_ok=True)
+            existing: dict = {}
+            if HOT_CUES_FILE.exists():
+                with open(HOT_CUES_FILE) as f:
+                    existing = json.load(f)
+            existing[fp] = self._hot_cues
+            with open(HOT_CUES_FILE, 'w') as f:
+                json.dump(existing, f, indent=2)
+        except Exception as e:
+            print(f"Could not save hot cues: {e}")
 
     # ------------------------------------------------------------------
     # Track loading
@@ -722,6 +863,11 @@ class MainWindow(QMainWindow):
         # Seek slider
         self.seek_slider.setMaximum(max(1, dur_sec * 10))
         self.lbl_time.setText(f"0:00 / {mm}:{ss:02d}")
+
+        # Reset cues for the new track
+        self._load_hot_cues(results['file_path'])
+        self._refresh_cue_buttons()
+        self._refresh_waveform_overlays()
 
         # Load audio + waveform
         # Capture playing state BEFORE load() calls stop() internally
