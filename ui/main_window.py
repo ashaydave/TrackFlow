@@ -675,6 +675,9 @@ class MainWindow(QMainWindow):
         self.playlist_table.setAlternatingRowColors(True)
         self.playlist_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.playlist_table.customContextMenuRequested.connect(self._playlist_context_menu)
+        self.playlist_table.itemSelectionChanged.connect(
+            lambda: self._play_selected_track(self.playlist_table)
+        )
         self.playlist_table.file_dropped.connect(
             lambda fp: self._add_to_playlist(
                 fp, self.playlist_selector.currentText()
