@@ -7,7 +7,7 @@
 <p align="center">
   A desktop DJ track analysis and preview tool built with PyQt6.
   <br>
-  Analyze BPM, musical key, and energy levels across your music library — then preview, loop, and organize tracks into playlists.
+  Analyze BPM, musical key, and energy levels across your music library — then preview, loop, cue, find similar tracks, and organize into playlists.
 </p>
 
 <p align="center">
@@ -27,16 +27,24 @@
 - Audio metadata extraction (format, bitrate, sample rate, duration, file size)
 - Batch analysis with thread pool and JSON cache
 
+**Track Similarity**
+- Find the 25 most similar tracks in your library to any loaded track
+- 32-dimensional feature vectors: 20 MFCC coefficients (timbre/texture) + 12 chroma means (pitch class)
+- Cosine similarity scoring — loudness-independent, 0–100% match score
+- Results shown in dedicated Similar tab with BPM, key, and match score
+- Requires tracks to be analyzed first; double-click any result to load it
+
 **Waveform & Visualization**
 - Frequency-colored filled waveform (red = bass, amber = mid, cyan = high)
 - Beat and bar grid overlay synced to detected BPM
-- Drag-to-seek on waveform
+- Click or drag-to-seek on waveform (seeks on release, no audio artifacts)
 - Playhead tracking during playback
 
 **DJ Controls**
-- 6 color-coded hot cues with persistence (keys 1–6, Shift+1–6 to set)
-- A–B loop with bar-snap presets (½, 1, 2, 4, 8 bars)
-- Loop in/out controls with visual overlay on waveform
+- 6 color-coded hot cues with persistence (keys 1–6, Shift+1–6 to clear)
+- **Seamless A–B looping** — loop region decoded into memory and played via `pygame.Sound(loops=-1)`, eliminating the pop/gap found in timer-based approaches
+- Bar-snap loop presets: ½, 1, 2, 4, 8 bars from nearest beat
+- Loop in/out controls (I / O keys) with visual overlay on waveform
 - Play/pause, seek forward/back via keyboard shortcuts
 
 **Library & Playlists**
@@ -44,23 +52,25 @@
 - Sortable columns: track name, BPM, key (Camelot order), energy level
 - Low-bitrate flag on tracks below 320 kbps
 - Search/filter across library
-- Create, delete, and export playlists (M3U)
+- Create, delete, and export playlists (copy to folder)
 - Multi-select drag-and-drop from library to playlist
 - Multi-delete from playlist
-- Click any track in library or playlist to load and preview it
+- Click any track in library, playlist, or similarity results to load and preview
 
 **Keyboard Shortcuts**
 | Key | Action |
 |-----|--------|
 | `Space` | Play / Pause |
-| `←` `→` | Seek ±5 seconds |
+| `←` / `→` | Seek ±5 seconds |
+| `Shift+←` / `→` | Seek ±30 seconds |
 | `I` | Set loop in-point |
-| `O` | Set loop out-point / stop loop |
-| `1`–`6` | Jump to hot cue |
-| `Shift+1`–`6` | Set hot cue |
-| `Enter` | Add selected library track to playlist |
-| `Delete` | Remove selected playlist track(s) |
-| `F1` | Open help |
+| `O` | Set loop out-point / stop loop (press again to stop) |
+| `L` | Toggle loop on / off |
+| `1`–`6` | Jump to hot cue (sets if empty) |
+| `Shift+1`–`6` | Clear hot cue |
+| `Enter` | Play selected track (library or playlist) |
+| `Delete` | Remove selected track(s) from playlist |
+| `F1` / `?` | Open help |
 
 ## Getting Started
 
@@ -90,32 +100,46 @@ pip install PyQt6 numpy scipy soundfile soxr mutagen pygame
 python main.py
 ```
 
+### Build Executable (Windows)
+
+```bash
+build.bat
+# Output: dist\TrackFlow\TrackFlow.exe
+```
+
+Requires PyInstaller (`pip install pyinstaller`) and the `dj-analyzer` conda environment.
+
 ## Project Structure
 
 ```
 TrackFlow/
 ├── main.py                  # Application entry point
+├── paths.py                 # Centralized path resolution (dev + frozen exe)
 ├── analyzer/
-│   ├── audio_analyzer.py    # Core BPM/key/energy analysis engine
-│   └── batch_analyzer.py    # Thread pool batch analysis + JSON cache
+│   ├── audio_analyzer.py    # Core BPM/key/energy/MFCC/chroma analysis engine
+│   ├── batch_analyzer.py    # Thread pool batch analysis + JSON cache
+│   └── similarity.py        # 32-dim cosine similarity search
 ├── ui/
 │   ├── main_window.py       # Main application window and all UI logic
 │   ├── waveform_dj.py       # Frequency-colored waveform widget
-│   ├── audio_player.py      # Pygame-based audio player with state machine
+│   ├── audio_player.py      # Pygame-based audio player (STOPPED/PLAYING/PAUSED/LOOP_PLAYING)
 │   └── styles.py            # Centralized cyberpunk QSS stylesheet
 ├── assets/
-│   └── logo.svg             # Application logo
+│   ├── logo.svg             # Application logo (vector)
+│   ├── logo_32.png          # Toolbar icon
+│   └── logo_256.png         # Window icon
 ├── data/
-│   ├── cache/               # Analysis results cache (JSON)
+│   ├── cache/               # Analysis results cache (JSON, keyed by path+mtime+size)
 │   └── hot_cues.json        # Saved hot cue positions
 └── tests/
     ├── test_analyzer_speed.py
-    └── test_batch_analyzer.py
+    ├── test_batch_analyzer.py
+    └── test_similarity.py
 ```
 
 ## Built With
 
-This project was built entirely with [Claude](https://claude.ai) by Anthropic — from the analysis engine and UI layout to the waveform rendering and keyboard shortcuts.
+This project was built entirely with [Claude](https://claude.ai) by Anthropic — from the analysis engine and UI layout to the waveform rendering, seamless looping, and similarity search.
 
 ## License
 
