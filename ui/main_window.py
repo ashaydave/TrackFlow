@@ -472,6 +472,25 @@ class MainWindow(QMainWindow):
 
         lay.addStretch()
 
+        # ── TrackFlow branding (right side) ───────────────────────────
+        from paths import get_assets_dir
+        from PyQt6.QtGui import QPixmap
+        _logo_path = get_assets_dir() / "logo_32.png"
+        lbl_logo = QLabel()
+        if _logo_path.exists():
+            pix = QPixmap(str(_logo_path))
+            lbl_logo.setPixmap(pix.scaled(
+                24, 24,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
+        lbl_logo.setFixedSize(28, 32)
+        lay.addWidget(lbl_logo)
+
+        lbl_brand = QLabel("TrackFlow")
+        lbl_brand.setObjectName("brand_label")
+        lay.addWidget(lbl_brand)
+
         # Connections
         self.btn_load_track.clicked.connect(self._load_single_track)
         self.btn_load_folder.clicked.connect(self._load_folder)

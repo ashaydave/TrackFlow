@@ -325,4 +325,13 @@ QTabBar::tab:selected {
     margin-bottom: -1px;
     padding-bottom: 5px;
 }
+
+/* ─── Toolbar branding ──────────────────────────────────── */
+QLabel#brand_label {
+    color: #00ccff;
+    font-size: 15px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    padding-right: 6px;
+}
 """
