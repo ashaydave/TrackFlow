@@ -29,3 +29,5 @@ Thumbs.db
 bench_*.py
 debug_key*.py
 quick_time_test.py
+
+*.spec.bak
