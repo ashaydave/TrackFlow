@@ -58,7 +58,7 @@ def find_similar(
     query_fp: str,
     candidate_fps: list[str],
     cache_dir: Path | None = None,
-    top_n: int = 10,
+    top_n: int = 25,
 ) -> list[dict]:
     """
     Return top_n most similar tracks from candidate_fps.

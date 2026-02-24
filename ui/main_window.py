@@ -1649,7 +1649,7 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
         results = find_similar(query_fp, candidates,
-                               cache_dir=get_cache_dir(), top_n=10)
+                               cache_dir=get_cache_dir(), top_n=25)
         self._populate_similar_table(results)
         self.bottom_tabs.setCurrentWidget(self.similar_widget)
 
