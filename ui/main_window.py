@@ -675,9 +675,7 @@ class MainWindow(QMainWindow):
         self.playlist_table.setAlternatingRowColors(True)
         self.playlist_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.playlist_table.customContextMenuRequested.connect(self._playlist_context_menu)
-        self.playlist_table.itemSelectionChanged.connect(
-            lambda: self._play_selected_track(self.playlist_table)
-        )
+        self.playlist_table.cellClicked.connect(self._on_playlist_track_clicked)
         self.playlist_table.file_dropped.connect(
             lambda fp: self._add_to_playlist(
                 fp, self.playlist_selector.currentText()
@@ -1100,8 +1098,23 @@ class MainWindow(QMainWindow):
         rows = self.track_table.selectedItems()
         if not rows:
             return
+        # Clear playlist selection so only one table has a selection
+        self.playlist_table.blockSignals(True)
+        self.playlist_table.clearSelection()
+        self.playlist_table.blockSignals(False)
         row = rows[0].row()
         fp_item = self.track_table.item(row, 0)
+        if fp_item:
+            fp = fp_item.data(Qt.ItemDataRole.UserRole)
+            if fp:
+                self._start_analysis(fp)
+
+    def _on_playlist_track_clicked(self, row: int, _col: int):
+        """Load the clicked playlist track and clear library selection."""
+        self.track_table.blockSignals(True)
+        self.track_table.clearSelection()
+        self.track_table.blockSignals(False)
+        fp_item = self.playlist_table.item(row, 0)
         if fp_item:
             fp = fp_item.data(Qt.ItemDataRole.UserRole)
             if fp:
