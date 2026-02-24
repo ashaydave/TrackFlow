@@ -40,7 +40,7 @@ class AudioAnalyzer:
 
         Returns:
             dict with: file_path, filename, bpm, key, energy,
-                       metadata, audio_info, duration
+                       metadata, audio_info, duration, features
         """
         file_path = Path(file_path)
         if not file_path.exists():
@@ -56,15 +56,24 @@ class AudioAnalyzer:
         # --- STFT once, reuse for BPM, key and energy ---
         S_power, n_frames = self._compute_stft(y)
 
+        # Compute chroma once (used for both key detection and features)
+        n_frames_30s = min(int(30 * sr / self.HOP_LENGTH), n_frames)
+        S_30 = S_power[:, :n_frames_30s]
+        chroma_avg = self._compute_chroma(S_30, sr)
+
         results = {
             'file_path': str(file_path.absolute()),
             'filename': file_path.name,
             'bpm': self._detect_bpm(S_power, sr),
-            'key': self._detect_key(S_power, n_frames, sr),
+            'key': self._detect_key_from_chroma(chroma_avg),
             'energy': self._calculate_energy_full(file_path),
             'metadata': metadata,
             'audio_info': audio_info,
             'duration': audio_info.get('duration', len(y) / sr),
+            'features': {
+                'mfcc':   self._compute_mfcc(S_power, sr),
+                'chroma': chroma_avg.tolist(),
+            },
         }
 
         return results
@@ -155,7 +164,29 @@ class AudioAnalyzer:
             fb[i] = np.clip(np.minimum(rise, fall), 0, 1)
         return fb
 
+    # ── MEL FILTERBANK (instance method wrapper) ────────────────────
+
+    def _mel_filterbank(self, sr, n_fft, n_mels=64):
+        """Return a mel filterbank matrix of shape (n_mels, n_bins)."""
+        return self._build_mel_fb(sr, n_fft, n_mels)
+
     # ── KEY ──────────────────────────────────────────────────────────────
+
+    def _detect_key_from_chroma(self, chroma_avg):
+        """Detect key from a pre-computed chroma vector."""
+        try:
+            key_index = int(np.argmax(chroma_avg))
+            is_major = self._is_major_key(chroma_avg)
+            return {
+                'notation': self._index_to_key(key_index, is_major),
+                'camelot':  self._to_camelot(key_index, is_major),
+                'open_key': self._to_open_key(key_index, is_major),
+                'confidence': 'medium',
+            }
+        except Exception as e:
+            print(f"Key detection failed: {e}")
+            return {'notation': 'Unknown', 'camelot': 'N/A',
+                    'open_key': 'N/A', 'confidence': 'none'}
 
     def _detect_key(self, S_power, n_frames, sr):
         """Key detection using chroma from STFT bins + KS profiles."""
@@ -163,22 +194,11 @@ class AudioAnalyzer:
             n_frames_30s = min(int(30 * sr / self.HOP_LENGTH), n_frames)
             S_30 = S_power[:, :n_frames_30s]
             chroma_avg = self._compute_chroma(S_30, sr)
-            key_index = int(np.argmax(chroma_avg))
-            is_major = self._is_major_key(chroma_avg)
-            return {
-                'notation': self._index_to_key(key_index, is_major),
-                'camelot': self._to_camelot(key_index, is_major),
-                'open_key': self._to_open_key(key_index, is_major),
-                'confidence': 'medium',
-            }
+            return self._detect_key_from_chroma(chroma_avg)
         except Exception as e:
             print(f"Key detection failed: {e}")
-            return {
-                'notation': 'Unknown',
-                'camelot': 'N/A',
-                'open_key': 'N/A',
-                'confidence': 'none',
-            }
+            return {'notation': 'Unknown', 'camelot': 'N/A',
+                    'open_key': 'N/A', 'confidence': 'none'}
 
     def _compute_chroma(self, S_power, sr):
         """Map STFT power bins to 12 pitch classes (no librosa needed).
@@ -201,6 +221,21 @@ class AudioAnalyzer:
         chroma /= np.maximum(counts, 1.0)
         return chroma
 
+
+    def _compute_mfcc(self, S_power, sr, n_mfcc=20):
+        """Compute MFCC means from power spectrogram using scipy DCT.
+
+        Uses the existing mel filterbank (same one used for BPM onset flux).
+        Returns n_mfcc floats -- the time-averaged MFCC coefficients.
+        """
+        from scipy.fft import dct as _dct
+        n_mels = 64
+        fb = self._mel_filterbank(sr, self.N_FFT, n_mels)   # (n_mels, n_bins)
+        mel = fb @ S_power                                    # (n_mels, n_frames)
+        log_mel = np.log(mel + 1e-9)                          # log compression
+        # DCT-II across mel bands -> MFCC; keep coefficients 0..n_mfcc-1
+        mfcc_matrix = _dct(log_mel, axis=0, norm='ortho')[:n_mfcc, :]
+        return mfcc_matrix.mean(axis=1).tolist()
     def _is_major_key(self, chroma_avg):
         """Krumhansl-Schmuckler major/minor classification."""
         major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09,

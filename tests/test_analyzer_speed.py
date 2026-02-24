@@ -217,3 +217,29 @@ def test_paths_frozen_detection():
     assert hasattr(assets_dir, '__truediv__'), "get_assets_dir() must return a Path"
     # In dev mode (not frozen) data dir should be under repo root
     assert 'TrackFlow' in str(data_dir) or 'dj-track-analyzer' in str(data_dir)
+
+
+@pytest.mark.skipif(not Path(SAMPLE_TRACK).exists(), reason="Sample track not found")
+def test_features_in_analysis_result():
+    """analyze_track must return a 'features' key with mfcc (20) and chroma (12)."""
+    analyzer = AudioAnalyzer()
+    result = analyzer.analyze_track(SAMPLE_TRACK)
+    assert 'features' in result, "Missing 'features' key"
+    feats = result['features']
+    assert 'mfcc' in feats,   "Missing mfcc in features"
+    assert 'chroma' in feats, "Missing chroma in features"
+    assert len(feats['mfcc'])   == 20, f"Expected 20 MFCCs, got {len(feats['mfcc'])}"
+    assert len(feats['chroma']) == 12, f"Expected 12 chroma, got {len(feats['chroma'])}"
+    assert all(isinstance(v, float) for v in feats['mfcc'])
+    assert all(isinstance(v, float) for v in feats['chroma'])
+
+def test_mfcc_shape_no_audio():
+    """_compute_mfcc must return exactly n_mfcc floats for synthetic input."""
+    import numpy as np
+    from analyzer.audio_analyzer import AudioAnalyzer
+    analyzer = AudioAnalyzer()
+    n_bins = analyzer.N_FFT // 2 + 1
+    S_power = np.abs(np.random.randn(n_bins, 100)) ** 2
+    mfcc = analyzer._compute_mfcc(S_power, analyzer.sample_rate, n_mfcc=20)
+    assert len(mfcc) == 20
+    assert all(isinstance(v, float) for v in mfcc)
