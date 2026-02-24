@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QFileDialog, QHeaderView, QProgressBar, QStatusBar, QSlider,
     QMenu, QApplication, QComboBox, QInputDialog, QAbstractItemView,
-    QDialog, QScrollArea,
+    QDialog, QScrollArea, QTabWidget,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint
 from PyQt6.QtGui import QColor, QAction, QKeyEvent, QShortcut, QKeySequence
@@ -326,6 +326,7 @@ class MainWindow(QMainWindow):
         self._loop_b: float | None = None
         self._loop_active: bool = False
         self._help_dialog = None
+        self._find_similar_after_load = False
 
         self.audio_player = AudioPlayer()
         self.audio_player.position_changed.connect(self._on_position_changed)
@@ -623,7 +624,15 @@ class MainWindow(QMainWindow):
         self.lbl_audio_meta.setObjectName("meta_text")
         lay.addWidget(self.lbl_audio_meta)
 
-        lay.addWidget(self._build_playlist_panel())
+        playlist_widget = self._build_playlist_panel()
+        self.bottom_tabs = QTabWidget()
+        self.bottom_tabs.setObjectName("bottom_tabs")
+        self.bottom_tabs.addTab(playlist_widget, "Playlists")
+
+        self.similar_widget = self._build_similar_panel()
+        self.bottom_tabs.addTab(self.similar_widget, "Similar")
+
+        lay.addWidget(self.bottom_tabs)
 
         return panel
 
@@ -699,6 +708,49 @@ class MainWindow(QMainWindow):
         self.playlist_selector.currentIndexChanged.connect(self._on_playlist_changed)
 
         return panel
+
+    def _build_similar_panel(self) -> QWidget:
+        """Build the 'Similar Tracks' tab content."""
+        widget = QWidget()
+        lay = QVBoxLayout(widget)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(4)
+
+        # Top bar: button + status label
+        top = QHBoxLayout()
+        self.btn_find_similar = QPushButton("Find Similar")
+        self.btn_find_similar.setFixedHeight(28)
+        self.btn_find_similar.setEnabled(False)
+        self.btn_find_similar.setToolTip("Find tracks most similar to the currently loaded track")
+        top.addWidget(self.btn_find_similar)
+
+        self.lbl_similar_status = QLabel("Load and analyze a track to find similar ones")
+        self.lbl_similar_status.setObjectName("meta_text")
+        top.addWidget(self.lbl_similar_status, stretch=1)
+        lay.addLayout(top)
+
+        # Results table
+        self.similar_table = QTableWidget()
+        self.similar_table.setColumnCount(5)
+        self.similar_table.setHorizontalHeaderLabels(["#", "Track", "Match", "BPM", "Key"])
+        self.similar_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.similar_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.similar_table.verticalHeader().setVisible(False)
+        self.similar_table.setShowGrid(False)
+        self.similar_table.setAlternatingRowColors(True)
+        self.similar_table.verticalHeader().setDefaultSectionSize(22)
+        sh = self.similar_table.horizontalHeader()
+        sh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        sh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        sh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        sh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        sh.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.similar_table.setColumnWidth(0, 28)
+        self.similar_table.setColumnWidth(2, 55)
+        self.similar_table.setColumnWidth(3, 55)
+        self.similar_table.setColumnWidth(4, 45)
+        lay.addWidget(self.similar_table)
+        return widget
 
     def _build_hot_cue_row(self) -> QWidget:
         """Build the 6-button hot cue row."""
