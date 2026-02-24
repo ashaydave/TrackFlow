@@ -305,7 +305,11 @@ QToolTip {
 }
 
 /* ─── Tab Widget ────────────────────────────────────────── */
-QTabWidget::pane { border: none; }
+QTabWidget::pane {
+    border: 1px solid #223355;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+}
 QTabBar::tab {
     background: #1a1a2e;
     color: #aaaaaa;
@@ -318,5 +322,7 @@ QTabBar::tab:selected {
     background: #111830;
     color: #00ccff;
     border-color: #0088ff;
+    margin-bottom: -1px;
+    padding-bottom: 5px;
 }
 """
