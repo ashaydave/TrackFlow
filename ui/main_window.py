@@ -665,31 +665,24 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(0, 4, 0, 0)
         lay.setSpacing(4)
 
-        # Header row
-        header_row = QHBoxLayout()
-        header_lbl = QLabel("PLAYLISTS")
-        header_lbl.setObjectName("section_header")
-        header_row.addWidget(header_lbl)
-        header_row.addStretch()
-        btn_new = QPushButton("+ New")
-        btn_new.setFixedHeight(24)
-        btn_new.clicked.connect(self._new_playlist)
-        header_row.addWidget(btn_new)
-        lay.addLayout(header_row)
-
-        # Selector + action row
+        # Selector + action row (single compact row)
         ctrl_row = QHBoxLayout()
         self.playlist_selector = QComboBox()
-        self.playlist_selector.setMinimumWidth(160)
+        self.playlist_selector.setMinimumWidth(120)
         ctrl_row.addWidget(self.playlist_selector, stretch=1)
 
-        btn_delete = QPushButton("Del")
-        btn_delete.setFixedSize(36, 28)
-        btn_delete.setToolTip("Delete playlist")
+        btn_new = QPushButton("+ New")
+        btn_new.setFixedHeight(28)
+        btn_new.clicked.connect(self._new_playlist)
+        ctrl_row.addWidget(btn_new)
+
+        btn_delete = QPushButton("Delete")
+        btn_delete.setFixedHeight(28)
+        btn_delete.setToolTip("Delete selected playlist")
         btn_delete.clicked.connect(self._delete_playlist)
         ctrl_row.addWidget(btn_delete)
 
-        btn_export = QPushButton("\U0001f4c1 Export")   # 📁
+        btn_export = QPushButton("Export")
         btn_export.setFixedHeight(28)
         btn_export.setToolTip("Copy all tracks to a folder")
         btn_export.clicked.connect(self._export_playlist)
