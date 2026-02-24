@@ -1,4 +1,4 @@
-r"""
+"""
 paths.py — Centralised path resolution for TrackFlow.
 
 In dev mode  : data/ and assets/ are relative to this file.
