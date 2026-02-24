@@ -1071,6 +1071,11 @@ class MainWindow(QMainWindow):
         self._status.showMessage(
             f"Loop: {label} bar(s) · {a_secs:.2f}s → {b_secs:.2f}s"
         )
+        # Start gapless Sound-based loop if playing
+        if self.audio_player.is_playing and self.current_track:
+            self.audio_player.start_loop(
+                self.current_track['file_path'], a_secs, b_secs
+            )
 
     def _refresh_loop_buttons(self) -> None:
         base_style = (
