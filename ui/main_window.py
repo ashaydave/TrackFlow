@@ -722,6 +722,7 @@ class MainWindow(QMainWindow):
         self.btn_find_similar.setFixedHeight(28)
         self.btn_find_similar.setEnabled(False)
         self.btn_find_similar.setToolTip("Find tracks most similar to the currently loaded track")
+        self.btn_find_similar.clicked.connect(self._run_find_similar)
         top.addWidget(self.btn_find_similar)
 
         self.lbl_similar_status = QLabel("Load and analyze a track to find similar ones")
@@ -749,6 +750,7 @@ class MainWindow(QMainWindow):
         self.similar_table.setColumnWidth(2, 55)
         self.similar_table.setColumnWidth(3, 55)
         self.similar_table.setColumnWidth(4, 45)
+        self.similar_table.cellDoubleClicked.connect(self._on_similar_double_clicked)
         lay.addWidget(self.similar_table)
         return widget
 
@@ -1369,6 +1371,18 @@ class MainWindow(QMainWindow):
             self._enable_controls(False)
             self._status.showMessage("Error loading audio")
 
+        # Enable Find Similar if this track has been analyzed with features
+        has_features = bool(self.current_track and self.current_track.get('features'))
+        self.btn_find_similar.setEnabled(has_features)
+        self.lbl_similar_status.setText(
+            "Click 'Find Similar' to search your library"
+            if has_features else "Analyze track first to enable similarity search"
+        )
+        # Auto-trigger similarity search if requested via context menu
+        if self._find_similar_after_load:
+            self._find_similar_after_load = False
+            self._run_find_similar()
+
     def _enable_controls(self, enabled: bool):
         for w in (self.btn_play, self.btn_stop, self.btn_skip_back,
                   self.btn_skip_fwd, self.seek_slider):
@@ -1600,6 +1614,75 @@ class MainWindow(QMainWindow):
                 self.playlist_table.setItem(row, 2, QTableWidgetItem("--"))
         self.playlist_table.setSortingEnabled(True)
 
+    # ------------------------------------------------------------------
+    # Similar Tracks
+    # ------------------------------------------------------------------
+
+    def _run_find_similar(self) -> None:
+        """Run cosine similarity search and populate the Similar tab."""
+        from analyzer.similarity import find_similar
+        from paths import get_cache_dir
+
+        if not self.current_track:
+            return
+
+        query_fp = self.current_track['file_path']
+        candidates = list(self.library_files)
+
+        self.lbl_similar_status.setText("Searching…")
+        QApplication.processEvents()
+
+        results = find_similar(query_fp, candidates,
+                               cache_dir=get_cache_dir(), top_n=10)
+        self._populate_similar_table(results)
+        self.bottom_tabs.setCurrentWidget(self.similar_widget)
+
+    def _populate_similar_table(self, results: list) -> None:
+        """Fill the similar_table with ranked results."""
+        self.similar_table.setRowCount(0)
+        if not results:
+            self.lbl_similar_status.setText(
+                "No similar tracks found — analyze more tracks first"
+            )
+            return
+
+        self.lbl_similar_status.setText(
+            f"Top {len(results)} matches from {len(self.library_files)} tracks"
+        )
+        for rank, r in enumerate(results, start=1):
+            row = self.similar_table.rowCount()
+            self.similar_table.insertRow(row)
+
+            rank_item = QTableWidgetItem(str(rank))
+            rank_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.similar_table.setItem(row, 0, rank_item)
+
+            name_item = QTableWidgetItem(r['name'])
+            name_item.setData(Qt.ItemDataRole.UserRole, r['file_path'])
+            name_item.setToolTip(r['file_path'])
+            self.similar_table.setItem(row, 1, name_item)
+
+            pct = int(r['similarity'] * 100)
+            match_item = QTableWidgetItem(f"{pct}%")
+            match_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if pct >= 85:
+                match_item.setForeground(QColor("#00ccff"))
+            elif pct >= 70:
+                match_item.setForeground(QColor("#FFB900"))
+            self.similar_table.setItem(row, 2, match_item)
+
+            bpm = r.get('bpm')
+            self.similar_table.setItem(row, 3, QTableWidgetItem(str(bpm) if bpm else "--"))
+            self.similar_table.setItem(row, 4, QTableWidgetItem(r.get('key', '--')))
+
+    def _on_similar_double_clicked(self, row: int, _col: int) -> None:
+        """Load the double-clicked similar track into the deck."""
+        item = self.similar_table.item(row, 1)
+        if item:
+            fp = item.data(Qt.ItemDataRole.UserRole)
+            if fp:
+                self._start_analysis(fp)
+
     def _playlist_context_menu(self, pos: QPoint) -> None:
         item = self.playlist_table.itemAt(pos)
         if not item:
@@ -1677,6 +1760,7 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         action_analyze = menu.addAction("Re-analyze")
         action_reveal  = menu.addAction("Open in Explorer")
+        sim_action     = menu.addAction("Find Similar Tracks")
         menu.addSeparator()
 
         # "Add to Playlist" submenu
@@ -1697,5 +1781,12 @@ class MainWindow(QMainWindow):
             self._start_analysis(fp)
         elif action == action_reveal and fp:
             os.startfile(str(Path(fp).parent))
+        elif action == sim_action:
+            fp_item = self.track_table.item(row, 0)
+            if fp_item:
+                fp = fp_item.data(Qt.ItemDataRole.UserRole)
+                if fp:
+                    self._find_similar_after_load = True
+                    self._start_analysis(fp)
         elif action in playlist_actions and fp:
             self._add_to_playlist(fp, playlist_actions[action])
