@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0e1a"/>
+      <stop offset="100%" stop-color="#111830"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0088ff"/>
+      <stop offset="50%" stop-color="#00ccff"/>
+      <stop offset="100%" stop-color="#ff8800"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0088ff"/>
+      <stop offset="100%" stop-color="#00ccff"/>
+    </linearGradient>
+    <clipPath id="circle-clip">
+      <circle cx="256" cy="256" r="220"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="url(#bg)"/>
+
+  <!-- Outer ring -->
+  <circle cx="256" cy="256" r="240" fill="none" stroke="url(#ring)" stroke-width="6" opacity="0.8"/>
+
+  <!-- Inner ring accent -->
+  <circle cx="256" cy="256" r="220" fill="none" stroke="#0088ff" stroke-width="1.5" opacity="0.3"/>
+
+  <!-- Waveform bars (clipped to circle) -->
+  <g clip-path="url(#circle-clip)" opacity="0.9">
+    <!-- Left section - cyan/blue -->
+    <rect x="76" y="218" width="8" height="76" rx="4" fill="#0077dd"/>
+    <rect x="92" y="198" width="8" height="116" rx="4" fill="#0088ee"/>
+    <rect x="108" y="178" width="8" height="156" rx="4" fill="#0099ff"/>
+    <rect x="124" y="192" width="8" height="128" rx="4" fill="#0099ff"/>
+    <rect x="140" y="208" width="8" height="96" rx="4" fill="#00aaff"/>
+    <rect x="156" y="172" width="8" height="168" rx="4" fill="#00aaff"/>
+    <rect x="172" y="152" width="8" height="208" rx="4" fill="#00bbff"/>
+    <rect x="188" y="182" width="8" height="148" rx="4" fill="#00bbff"/>
+
+    <!-- Center section - peak, cyan glow -->
+    <rect x="204" y="138" width="8" height="236" rx="4" fill="#00ccff"/>
+    <rect x="220" y="112" width="8" height="288" rx="4" fill="#00ddff"/>
+    <rect x="236" y="96" width="10" height="320" rx="5" fill="#00eeff"/>
+    <rect x="254" y="82" width="10" height="348" rx="5" fill="#00ffff"/>
+    <rect x="272" y="96" width="10" height="320" rx="5" fill="#00eeff"/>
+    <rect x="290" y="118" width="8" height="276" rx="4" fill="#33ddcc"/>
+
+    <!-- Right section - transition to orange -->
+    <rect x="306" y="148" width="8" height="216" rx="4" fill="#66cc99"/>
+    <rect x="322" y="168" width="8" height="176" rx="4" fill="#99bb66"/>
+    <rect x="338" y="182" width="8" height="148" rx="4" fill="#ccaa33"/>
+    <rect x="354" y="162" width="8" height="188" rx="4" fill="#dd9922"/>
+    <rect x="370" y="188" width="8" height="136" rx="4" fill="#ee8811"/>
+    <rect x="386" y="198" width="8" height="116" rx="4" fill="#ff7700"/>
+    <rect x="402" y="178" width="8" height="156" rx="4" fill="#ff6600"/>
+    <rect x="418" y="208" width="8" height="96" rx="4" fill="#ff5500"/>
+    <rect x="434" y="222" width="8" height="68" rx="4" fill="#ee4400"/>
+  </g>
+
+  <!-- Playhead line -->
+  <line x1="259" y1="60" x2="259" y2="452" stroke="#ffffff" stroke-width="2" opacity="0.6"/>
+
+  <!-- Subtle glow at center -->
+  <circle cx="259" cy="256" r="8" fill="#00ffff" opacity="0.4"/>
+  <circle cx="259" cy="256" r="4" fill="#ffffff" opacity="0.8"/>
+</svg>

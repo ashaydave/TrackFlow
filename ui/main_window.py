@@ -1,5 +1,5 @@
 """
-DJ Track Analyzer - Main Window UI
+TrackFlow - Main Window UI
 PyQt6-based desktop application for browsing and analyzing DJ tracks.
 """
 
@@ -124,7 +124,7 @@ class HelpDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("DJ Track Analyzer — Help")
+        self.setWindowTitle("TrackFlow — Help")
         self.setMinimumSize(480, 520)
         self.setModal(False)
 
@@ -331,7 +331,7 @@ class MainWindow(QMainWindow):
         self.audio_player.playback_finished.connect(self._on_playback_finished)
         self.audio_player.set_volume(0.7)
 
-        self.setWindowTitle("DJ Track Analyzer")
+        self.setWindowTitle("TrackFlow")
         self.setMinimumSize(1200, 720)
         self.resize(1400, 820)
 

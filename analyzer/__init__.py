@@ -1,5 +1,5 @@
 """
-DJ Track Analyzer Package
+TrackFlow Package
 Audio analysis tools for DJs
 """
 

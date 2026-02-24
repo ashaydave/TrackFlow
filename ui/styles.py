@@ -1,6 +1,6 @@
 # ui/styles.py
 """
-Centralized stylesheet for DJ Track Analyzer.
+Centralized stylesheet for TrackFlow.
 Cyberpunk / dark DJ software aesthetic.
 """
 

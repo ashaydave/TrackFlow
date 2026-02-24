@@ -1,11 +1,12 @@
 """
-DJ Track Analyzer - Main Entry Point
+TrackFlow - Main Entry Point
 Launch the desktop application
 """
 
 import sys
+from pathlib import Path
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QPalette, QColor
+from PyQt6.QtGui import QPalette, QColor, QIcon
 from ui.main_window import MainWindow
 
 
@@ -38,6 +39,11 @@ def main():
 
     # Apply dark theme
     set_dark_theme(app)
+
+    # Set application icon (window title bar + taskbar)
+    icon_path = Path(__file__).parent / "assets" / "logo_256.png"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     # Create and show main window
     window = MainWindow()

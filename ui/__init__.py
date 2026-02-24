@@ -1,5 +1,5 @@
 """
-DJ Track Analyzer UI Package
+TrackFlow UI Package
 """
 
 from .main_window import MainWindow
