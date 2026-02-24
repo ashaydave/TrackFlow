@@ -4,7 +4,7 @@ paths.py — Centralised path resolution for TrackFlow.
 In dev mode  : data/ and assets/ are relative to this file.
 In frozen exe: data/ redirects to %APPDATA%\TrackFlow\
                assets/ resolves via sys._MEIPASS (bundle root).
-r"""
+"""
 import os
 import sys
 from pathlib import Path

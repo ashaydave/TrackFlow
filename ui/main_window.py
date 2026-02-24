@@ -25,6 +25,7 @@ from analyzer.batch_analyzer import BatchAnalyzer, is_cached, load_cached
 from ui.waveform_dj import WaveformDJ
 from ui.audio_player import AudioPlayer, PlayerState
 from ui.styles import STYLESHEET
+from paths import get_data_dir as _get_data_dir
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +37,6 @@ ROW_ANALYZING = QColor(10,  30,  70)
 ROW_DONE      = QColor(15,  15,  28)
 
 AUDIO_EXTS = {'.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aiff', '.aif'}
-from paths import get_data_dir as _get_data_dir
 PLAYLISTS_FILE = _get_data_dir() / 'playlists.json'
 HOT_CUES_FILE  = _get_data_dir() / 'hot_cues.json'
 

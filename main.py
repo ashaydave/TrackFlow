@@ -4,7 +4,6 @@ Launch the desktop application
 """
 
 import sys
-from pathlib import Path
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QPalette, QColor, QIcon
 from ui.main_window import MainWindow
