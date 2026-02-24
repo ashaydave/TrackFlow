@@ -448,7 +448,7 @@ class _BaseWaveform(QWidget):
             zoom_width = self._zoom_end - self._zoom_start
             pos = self._zoom_start + click_frac * zoom_width
             pos = max(0.0, min(1.0, pos))
-            self.position_clicked.emit(pos)
+            self.position_dragging.emit(pos)   # visual only on press — seek on release
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.MouseButton.LeftButton and self._data is not None:

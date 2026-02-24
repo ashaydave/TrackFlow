@@ -235,6 +235,29 @@ class HelpDialog(QDialog):
             "Adjacent Camelot numbers (+1 / \u22121) and same number in A/B are harmonically compatible."
         )
 
+        # ── Section 5: Track Similarity ───────────────────────────────
+        lay.addSpacing(4)
+        divider()
+        header("Track Similarity")
+        lay.addSpacing(2)
+        para(
+            "Each track is described by a 32-dimensional feature vector computed during analysis: "
+            "20 MFCC (Mel-Frequency Cepstral Coefficient) means capturing timbral texture and "
+            "spectral shape, plus 12 chroma means representing the pitch-class energy distribution "
+            "across the 12 semitones."
+        )
+        para(
+            "Similarity is cosine distance between two feature vectors — "
+            "it measures the angle between them, not their magnitude, so loudness differences "
+            "do not affect the score. The raw cosine value (\u22121 to +1) is mapped to a "
+            "0\u2013100\u202f% match score."
+        )
+        para(
+            "Requires tracks to be analyzed first (Analyze All). "
+            "Old cache entries from before the similarity feature was added will show "
+            "\u201cNo similar tracks found\u201d — re-run Analyze All to regenerate them."
+        )
+
         lay.addStretch()
         scroll.setWidget(content)
         outer.addWidget(scroll)
@@ -660,8 +683,8 @@ class MainWindow(QMainWindow):
         self.playlist_selector.setMinimumWidth(160)
         ctrl_row.addWidget(self.playlist_selector, stretch=1)
 
-        btn_delete = QPushButton("\U0001f5d1")   # 🗑
-        btn_delete.setFixedSize(28, 28)
+        btn_delete = QPushButton("Del")
+        btn_delete.setFixedSize(36, 28)
         btn_delete.setToolTip("Delete playlist")
         btn_delete.clicked.connect(self._delete_playlist)
         ctrl_row.addWidget(btn_delete)
