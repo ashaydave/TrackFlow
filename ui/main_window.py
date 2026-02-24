@@ -36,8 +36,9 @@ ROW_ANALYZING = QColor(10,  30,  70)
 ROW_DONE      = QColor(15,  15,  28)
 
 AUDIO_EXTS = {'.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aiff', '.aif'}
-PLAYLISTS_FILE = Path(__file__).parent.parent / 'data' / 'playlists.json'
-HOT_CUES_FILE  = Path(__file__).parent.parent / 'data' / 'hot_cues.json'
+from paths import get_data_dir as _get_data_dir
+PLAYLISTS_FILE = _get_data_dir() / 'playlists.json'
+HOT_CUES_FILE  = _get_data_dir() / 'hot_cues.json'
 
 HOT_CUE_COLORS = [
     QColor(255, 107,   0),   # 1 — Orange

@@ -41,7 +41,8 @@ def main():
     set_dark_theme(app)
 
     # Set application icon (window title bar + taskbar)
-    icon_path = Path(__file__).parent / "assets" / "logo_256.png"
+    from paths import get_assets_dir
+    icon_path = get_assets_dir() / "logo_256.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 

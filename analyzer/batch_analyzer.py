@@ -13,9 +13,8 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from analyzer.audio_analyzer import AudioAnalyzer
+from paths import get_cache_dir
 
-
-CACHE_DIR = Path(__file__).parent.parent / 'data' / 'cache'
 MAX_WORKERS = 3
 
 
@@ -28,8 +27,7 @@ def _cache_key(file_path: Path) -> str:
 
 def load_cached(file_path: Path) -> dict | None:
     """Return cached analysis result or None if not cached / stale."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file = CACHE_DIR / f"{_cache_key(file_path)}.json"
+    cache_file = get_cache_dir() / f"{_cache_key(file_path)}.json"
     if cache_file.exists():
         try:
             with open(cache_file) as f:
@@ -41,16 +39,14 @@ def load_cached(file_path: Path) -> dict | None:
 
 def save_cached(file_path: Path, results: dict) -> None:
     """Save analysis results to cache."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file = CACHE_DIR / f"{_cache_key(file_path)}.json"
+    cache_file = get_cache_dir() / f"{_cache_key(file_path)}.json"
     with open(cache_file, 'w') as f:
         json.dump(results, f)
 
 
 def is_cached(file_path: Path) -> bool:
     """Quick check without reading the file."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return (CACHE_DIR / f"{_cache_key(file_path)}.json").exists()
+    return (get_cache_dir() / f"{_cache_key(file_path)}.json").exists()
 
 
 class BatchAnalyzer(QObject):

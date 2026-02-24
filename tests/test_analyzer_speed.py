@@ -204,3 +204,16 @@ def test_low_bitrate_flag_threshold():
     assert should_flag(320)  is False
     assert should_flag(0)    is False
     assert should_flag(None) is False
+
+
+def test_paths_frozen_detection():
+    """paths module must export get_cache_dir() and get_data_dir() callables."""
+    import paths
+    cache_dir = paths.get_cache_dir()
+    data_dir = paths.get_data_dir()
+    assets_dir = paths.get_assets_dir()
+    assert hasattr(cache_dir, '__truediv__'), "get_cache_dir() must return a Path"
+    assert hasattr(data_dir, '__truediv__'), "get_data_dir() must return a Path"
+    assert hasattr(assets_dir, '__truediv__'), "get_assets_dir() must return a Path"
+    # In dev mode (not frozen) data dir should be under repo root
+    assert 'TrackFlow' in str(data_dir) or 'dj-track-analyzer' in str(data_dir)

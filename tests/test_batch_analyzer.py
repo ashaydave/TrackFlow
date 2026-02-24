@@ -1,7 +1,8 @@
 """Tests for batch_analyzer cache functions"""
 import pytest
 from pathlib import Path
-from analyzer.batch_analyzer import _cache_key, load_cached, save_cached, is_cached, CACHE_DIR
+from analyzer.batch_analyzer import _cache_key, load_cached, save_cached, is_cached
+from paths import get_cache_dir
 
 SAMPLE_TRACK = r"C:\Users\ashay\Downloads\y2mate.com - LudoWic  MIND PARADE Katana ZERO DLC_320kbps.mp3"
 
@@ -19,7 +20,7 @@ def test_cache_roundtrip():
     assert loaded['bpm'] == 103.4
 
     # Clean up
-    cache_file = CACHE_DIR / f"{_cache_key(fp)}.json"
+    cache_file = get_cache_dir() / f"{_cache_key(fp)}.json"
     cache_file.unlink(missing_ok=True)
     assert not is_cached(fp)
 
@@ -48,9 +49,9 @@ def test_load_cached_handles_corrupt_json(tmp_path):
     fp = tmp_path / "song.mp3"
     fp.touch()
     # Write corrupt JSON to cache location
-    from analyzer.batch_analyzer import CACHE_DIR, _cache_key
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file = CACHE_DIR / f"{_cache_key(fp)}.json"
+    cache_dir = get_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / f"{_cache_key(fp)}.json"
     cache_file.write_text("{{INVALID JSON")
     result = load_cached(fp)
     assert result is None
