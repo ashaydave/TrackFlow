@@ -1001,6 +1001,7 @@ class MainWindow(QMainWindow):
             self._loop_active = False
             self._refresh_loop_buttons()
             self._refresh_waveform_overlays()
+            self.audio_player.stop_loop()
             return
         # First press: need IN point first
         if self._loop_a is None:
@@ -1015,6 +1016,14 @@ class MainWindow(QMainWindow):
         self._loop_active = True
         self._refresh_loop_buttons()
         self._refresh_waveform_overlays()
+        # Start gapless Sound-based loop immediately if playing
+        if self.audio_player.is_playing and self.current_track:
+            a_secs = self._loop_a * self.audio_player.duration
+            b_secs = self._loop_b * self.audio_player.duration
+            if not self.audio_player.start_loop(
+                self.current_track['file_path'], a_secs, b_secs
+            ):
+                self._status.showMessage("Loop active (Sound init failed — using seek fallback)")
 
     def _toggle_loop(self) -> None:
         if self._loop_a is None or self._loop_b is None:
@@ -1022,6 +1031,14 @@ class MainWindow(QMainWindow):
         self._loop_active = not self._loop_active
         self._refresh_loop_buttons()
         self._refresh_waveform_overlays()
+        if self._loop_active and self.audio_player.is_playing and self.current_track:
+            a_secs = self._loop_a * self.audio_player.duration
+            b_secs = self._loop_b * self.audio_player.duration
+            self.audio_player.start_loop(
+                self.current_track['file_path'], a_secs, b_secs
+            )
+        elif not self._loop_active:
+            self.audio_player.stop_loop()
 
     def _snap_loop(self, bars: float) -> None:
         if not self.current_track:
@@ -1382,6 +1399,7 @@ class MainWindow(QMainWindow):
         self._refresh_waveform_overlays()
 
         # Reset loop state for new track
+        self.audio_player.stop_loop()
         self._loop_a = None
         self._loop_b = None
         self._loop_active = False
@@ -1454,13 +1472,6 @@ class MainWindow(QMainWindow):
 
     def _on_position_changed(self, pos: float):
         self.waveform.set_playback_position(pos)
-        # Loop playback
-        if (self._loop_active
-                and self._loop_a is not None
-                and self._loop_b is not None
-                and pos >= self._loop_b):
-            self.audio_player.seek(self._loop_a)
-            return
         if not self._seek_dragging:
             self.seek_slider.setValue(int(pos * self.seek_slider.maximum()))
         if self.current_track:
