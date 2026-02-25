@@ -31,3 +31,8 @@ debug_key*.py
 quick_time_test.py
 
 *.spec.bak
+
+# Runtime data (cache, playlists, hot cues)
+data/cache/
+data/playlists.json
+data/hot_cues.json

@@ -446,6 +446,11 @@ class MainWindow(QMainWindow):
         self.btn_load_folder.setFixedHeight(32)
         lay.addWidget(self.btn_load_folder)
 
+        self.btn_clear_library = QPushButton("Clear")
+        self.btn_clear_library.setFixedHeight(32)
+        self.btn_clear_library.setToolTip("Clear all tracks from library")
+        lay.addWidget(self.btn_clear_library)
+
         self.btn_analyze_all = QPushButton("Analyze All")
         self.btn_analyze_all.setObjectName("btn_primary")
         self.btn_analyze_all.setFixedHeight(32)
@@ -494,6 +499,7 @@ class MainWindow(QMainWindow):
         # Connections
         self.btn_load_track.clicked.connect(self._load_single_track)
         self.btn_load_folder.clicked.connect(self._load_folder)
+        self.btn_clear_library.clicked.connect(self._clear_library)
         self.btn_analyze_all.clicked.connect(self._analyze_all)
         self.search_box.textChanged.connect(self._filter_tracks)
 
@@ -1190,6 +1196,69 @@ class MainWindow(QMainWindow):
         self.track_count_label.setText(f"{len(files)} tracks")
         self.btn_analyze_all.setEnabled(True)
         self._status.showMessage(f"Loaded {len(files)} tracks")
+
+    def _clear_library(self):
+        """Reset the library to its initial empty state."""
+        # 1. Stop audio playback and any active loop
+        self.audio_player.stop_loop()
+        self.audio_player.stop()
+
+        # 2. Cancel running analysis threads
+        if self.batch_thread and self.batch_thread.isRunning():
+            self.batch_thread.cancel()
+        if self.analysis_thread is not None:
+            try:
+                self.analysis_thread.finished.disconnect()
+                self.analysis_thread.error.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+
+        # 3. Clear track table and data
+        self.track_table.setRowCount(0)
+        self.library_files = []
+        self._row_map = {}
+        self.current_track = None
+
+        # 4. Reset detail panel
+        self.lbl_title.setText("No track selected")
+        self.lbl_artist.setText("")
+        self.lbl_audio_meta.setText("")
+        _, bpm_val = self.card_bpm
+        _, key_val = self.card_key
+        _, cam_val = self.card_camelot
+        _, ene_val = self.card_energy
+        bpm_val.setText("--")
+        key_val.setText("--")
+        cam_val.setText("--")
+        ene_val.setText("--")
+
+        # 5. Clear waveform
+        self.waveform.clear()
+
+        # 6. Reset loop state
+        self._loop_a = None
+        self._loop_b = None
+        self._loop_active = False
+        self._refresh_loop_buttons()
+
+        # 7. Reset hot cue display
+        self._hot_cues = [None] * 6
+        self._refresh_cue_buttons()
+        self._refresh_waveform_overlays()
+
+        # 8. Clear similarity results
+        self.similar_table.setRowCount(0)
+
+        # 9. Reset controls to initial state
+        self.seek_slider.setValue(0)
+        self.seek_slider.setEnabled(False)
+        self.lbl_time.setText("0:00 / 0:00")
+        self.btn_analyze_all.setEnabled(False)
+        self.btn_analyze_all.setText("Analyze All")
+        self.batch_progress.setVisible(False)
+        self.track_count_label.setText("0 tracks")
+
+        self._status.showMessage("Library cleared")
 
     def _set_row(self, row: int, file_path: str):
         name = Path(file_path).stem
