@@ -14,10 +14,10 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QFileDialog, QHeaderView, QProgressBar, QStatusBar, QSlider,
     QMenu, QApplication, QComboBox, QInputDialog, QAbstractItemView,
-    QDialog, QScrollArea, QTabWidget,
+    QDialog, QScrollArea, QTabWidget, QSystemTrayIcon,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint
-from PyQt6.QtGui import QColor, QAction, QKeyEvent, QShortcut, QKeySequence
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint, QTimer
+from PyQt6.QtGui import QColor, QAction, QKeyEvent, QShortcut, QKeySequence, QIcon
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from analyzer.audio_analyzer import AudioAnalyzer
@@ -337,6 +337,14 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+
+        # System tray for download notifications
+        _logo_path = Path(__file__).parent.parent / "assets" / "logo_256.png"
+        self._tray: QSystemTrayIcon | None = None
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray = QSystemTrayIcon(QIcon(str(_logo_path)), self)
+            self._tray.show()
+
         self.current_track: dict | None = None
         self.library_files: list = []
         self.analysis_thread: AnalysisThread | None = None
@@ -365,15 +373,17 @@ class MainWindow(QMainWindow):
         self._load_playlists()
         self._setup_shortcuts()
 
+        # Trigger playlist sync 2s after launch (non-blocking background check)
+        QTimer.singleShot(2000, self._run_startup_sync)
+
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
 
     def _init_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-
-        root = QVBoxLayout(central)
+        # Library page (current full content)
+        library_page = QWidget()
+        root = QVBoxLayout(library_page)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
@@ -386,6 +396,19 @@ class MainWindow(QMainWindow):
         splitter.setSizes([340, 1060])
 
         root.addWidget(splitter)
+
+        # Downloads tab
+        from ui.downloads_tab import DownloadsTab
+        self._downloads_tab = DownloadsTab()
+        self._downloads_tab.import_requested.connect(self._import_downloaded_track)
+        self._downloads_tab.notify.connect(self._notify)
+
+        # Top-level tab widget
+        self._main_tabs = QTabWidget()
+        self._main_tabs.addTab(library_page,          "📚  Library")
+        self._main_tabs.addTab(self._downloads_tab,   "⬇   Downloads")
+
+        self.setCentralWidget(self._main_tabs)
 
         self._status = QStatusBar()
         self.setStatusBar(self._status)
@@ -1384,6 +1407,59 @@ class MainWindow(QMainWindow):
                 fp = item.data(Qt.ItemDataRole.UserRole)
                 if fp:
                     self._row_map[fp] = row
+
+    # ------------------------------------------------------------------
+    # Downloads integration
+    # ------------------------------------------------------------------
+
+    def _import_downloaded_track(self, file_path: str) -> None:
+        """
+        Add a downloaded file to the library and trigger analysis.
+        Called when the user clicks Import in the Downloads tab.
+        """
+        fp = Path(file_path)
+        if not fp.exists():
+            self._status.showMessage(f"File not found: {fp.name}", 4000)
+            return
+
+        if file_path in self._row_map:
+            # Already in library — just (re-)analyse it
+            self._main_tabs.setCurrentIndex(0)
+            self._start_analysis(file_path)
+            return
+
+        # Add a new pending row (mirrors the single-file load pattern)
+        self.track_table.setSortingEnabled(False)
+        try:
+            row = self.track_table.rowCount()
+            self.track_table.insertRow(row)
+            self._set_row(row, file_path)
+            self._row_map[file_path] = row
+            self.library_files.append(file_path)
+            self.track_count_label.setText(f"{len(self.library_files)} tracks")
+            self._highlight_row(row, ROW_PENDING)
+        finally:
+            self.track_table.setSortingEnabled(True)
+            self._rebuild_row_map()
+
+        # Switch to Library tab and begin analysis
+        self._main_tabs.setCurrentIndex(0)
+        self._start_analysis(file_path)
+
+    def _notify(self, title: str, message: str) -> None:
+        """Show a system tray notification and echo to the status bar."""
+        if self._tray:
+            self._tray.showMessage(
+                title, message,
+                QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
+        self._status.showMessage(f"{title}: {message}", 5000)
+
+    def _run_startup_sync(self) -> None:
+        """Trigger a background playlist sync after the app has fully loaded."""
+        if hasattr(self, "_downloads_tab"):
+            self._downloads_tab.run_startup_sync()
 
     # ------------------------------------------------------------------
     # Batch analysis
