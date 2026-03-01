@@ -16,17 +16,18 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QFileDialog, QTabWidget,
-    QSplitter, QGroupBox, QInputDialog, QSizePolicy, QProgressBar,
+    QSplitter, QGroupBox, QInputDialog, QSizePolicy, QProgressBar, QMessageBox,
 )
 from PyQt6.QtGui import QColor
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from paths import get_data_dir
-from downloader.yt_handler import DownloadWorker
+from downloader.yt_handler import DownloadWorker, find_ffmpeg
 from downloader.watcher import FolderWatcher
 from downloader.playlist_sync import (
     YouTubePlaylistSource,
     AppleMusicSource,
+    AppleMusicURLSource,
     PlaylistSyncWorker,
     load_sync_state,
     detect_apple_music_xml,
@@ -72,6 +73,9 @@ class DownloadsTab(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # Detect ffmpeg once at startup — enables MP3 320 kbps output
+        self._ffmpeg_path: str | None = find_ffmpeg()
 
         # Queue state: list of dicts
         # {url, title, source_label, status, file_path, worker_key}
@@ -162,6 +166,17 @@ class DownloadsTab(QWidget):
         btn_browse.clicked.connect(self._browse_output_dir)
         folder_row.addWidget(btn_browse)
         lay.addLayout(folder_row)
+
+        # Format indicator
+        if self._ffmpeg_path:
+            fmt_text = "🎵  Format: MP3 320 kbps  (ffmpeg detected)"
+            fmt_color = "#00cc66"
+        else:
+            fmt_text = "🎵  Format: m4a (best quality)  — install ffmpeg for MP3 320 kbps"
+            fmt_color = "#ffaa00"
+        fmt_lbl = QLabel(fmt_text)
+        fmt_lbl.setStyleSheet(f"color: {fmt_color}; font-size: 11px; padding: 2px 0;")
+        lay.addWidget(fmt_lbl)
 
         # Queue table
         self._queue_table = QTableWidget(0, 4)
@@ -258,9 +273,16 @@ class DownloadsTab(QWidget):
         am_lay.addWidget(self._am_table)
 
         am_btn_row = QHBoxLayout()
-        btn_add_am = QPushButton("+ Add Playlist")
+        btn_add_am = QPushButton("+ Add Playlist (XML)")
+        btn_add_am.setToolTip(
+            "Add a playlist by name from your iTunes / Apple Music XML library file")
         btn_add_am.clicked.connect(self._on_add_am_playlist)
         am_btn_row.addWidget(btn_add_am)
+        btn_add_am_url = QPushButton("+ Add Apple Music URL")
+        btn_add_am_url.setToolTip(
+            "Subscribe to a public Apple Music playlist via its music.apple.com URL")
+        btn_add_am_url.clicked.connect(self._on_add_am_url)
+        am_btn_row.addWidget(btn_add_am_url)
         am_btn_row.addStretch()
         am_lay.addLayout(am_btn_row)
         lay.addWidget(am_group)
@@ -433,7 +455,11 @@ class DownloadsTab(QWidget):
             status_item.setForeground(_COLOR_ACTIVE)
             self._queue_table.setItem(row, 2, status_item)
 
-        worker = DownloadWorker(item["url"], output_dir)
+        worker = DownloadWorker(
+            item["url"], output_dir,
+            prefer_mp3=True,
+            ffmpeg_path=self._ffmpeg_path,
+        )
         worker.progress.connect(self._on_dl_progress)
         worker.title_found.connect(self._on_dl_title_found)
         worker.done.connect(self._on_dl_done)
@@ -491,14 +517,29 @@ class DownloadsTab(QWidget):
 
     def _on_dl_error(self, url: str, message: str) -> None:
         row = self._row_for_active_url(url)
+        # Make age-restriction errors actionable
+        if "Sign in to confirm your age" in message or "age" in message.lower():
+            display = "⚠ Age-restricted"
+            tooltip = (
+                "This video requires age verification.\n"
+                "yt-dlp cannot download it without your browser cookies.\n\n"
+                "Fix: run once in a terminal:\n"
+                "  yt-dlp --cookies-from-browser chrome <url>\n"
+                "Or export cookies.txt from your browser and set the path\n"
+                "in the cookies field (coming soon)."
+            )
+        else:
+            display = "⚠ Error"
+            tooltip = message
+
         for item in self._queue:
             if item["url"] == url and item["status"] == _STATUS_DOWNLOADING:
-                item["status"] = f"⚠ {message[:40]}"
+                item["status"] = display
                 break
         if row >= 0:
-            status_item = QTableWidgetItem(f"⚠ Error")
+            status_item = QTableWidgetItem(display)
             status_item.setForeground(_COLOR_ERROR)
-            status_item.setToolTip(message)
+            status_item.setToolTip(tooltip)
             self._queue_table.setItem(row, 2, status_item)
 
         self._worker = None
@@ -506,13 +547,16 @@ class DownloadsTab(QWidget):
         self._start_next_download()
 
     def _on_import_selected(self) -> None:
+        selected_rows = {idx.row() for idx in self._queue_table.selectedIndexes()}
+        # If nothing selected, import every done row as a convenience
+        import_all = not selected_rows
         for row in range(self._queue_table.rowCount()):
             status_item = self._queue_table.item(row, 2)
             if status_item and status_item.text() == _STATUS_DONE:
-                if self._queue_table.isRowSelected(row):
-                    idx = self._queue_idx_for_row(row)
-                    if idx >= 0 and self._queue[idx].get("file_path"):
-                        self.import_requested.emit(self._queue[idx]["file_path"])
+                if import_all or row in selected_rows:
+                    q_idx = self._queue_idx_for_row(row)
+                    if q_idx >= 0 and self._queue[q_idx].get("file_path"):
+                        self.import_requested.emit(self._queue[q_idx]["file_path"])
 
     def _on_clear_done(self) -> None:
         rows_to_remove = [
@@ -558,6 +602,31 @@ class DownloadsTab(QWidget):
             return
         subs = self._config.setdefault("subscriptions", [])
         subs.append({"type": "apple_music", "playlist": name.strip()})
+        self._save_config()
+        self._refresh_subscription_tables()
+
+    def _on_add_am_url(self) -> None:
+        url, ok = QInputDialog.getText(
+            self,
+            "Add Apple Music Playlist URL",
+            "Paste the music.apple.com playlist URL:\n"
+            "(e.g. https://music.apple.com/us/playlist/house/pl.u-…)")
+        if not ok or not url.strip():
+            return
+        url = url.strip()
+        if "music.apple.com" not in url:
+            QMessageBox.warning(
+                self, "Invalid URL",
+                "Please paste a music.apple.com URL.\n"
+                "Example: https://music.apple.com/us/playlist/house/pl.u-…")
+            return
+        label, ok2 = QInputDialog.getText(
+            self, "Label", "Name for this playlist (shown in queue Source column):")
+        if not ok2:
+            return
+        label = label.strip() or url
+        subs = self._config.setdefault("subscriptions", [])
+        subs.append({"type": "apple_music_url", "url": url, "label": label})
         self._save_config()
         self._refresh_subscription_tables()
 
@@ -635,6 +704,25 @@ class DownloadsTab(QWidget):
                 self._add_yt_row(sub["url"], sub.get("label", sub["url"]))
             elif sub.get("type") == "apple_music":
                 self._add_am_row(sub["playlist"])
+            elif sub.get("type") == "apple_music_url":
+                self._add_am_row(
+                    sub.get("label", sub["url"]),
+                    key=sub["url"],
+                    sub_type="apple_music_url",
+                    tooltip=sub["url"],
+                )
+
+    @staticmethod
+    def _make_remove_btn() -> QPushButton:
+        """Create a visible red ✕ remove button for subscription rows."""
+        btn = QPushButton("✕ Remove")
+        btn.setFixedHeight(22)
+        btn.setStyleSheet(
+            "QPushButton { background: #5a1a1a; color: #ff6666; border: 1px solid #882222;"
+            " border-radius: 3px; padding: 0 6px; font-size: 11px; }"
+            "QPushButton:hover { background: #7a2222; color: #ff9999; border-color: #cc4444; }"
+        )
+        return btn
 
     def _add_yt_row(self, url: str, label: str) -> None:
         row = self._yt_table.rowCount()
@@ -643,19 +731,28 @@ class DownloadsTab(QWidget):
         url_item = QTableWidgetItem(url)
         url_item.setToolTip(url)
         self._yt_table.setItem(row, 1, url_item)
-        btn_rm = QPushButton("✕")
-        btn_rm.setFixedSize(24, 22)
+        btn_rm = self._make_remove_btn()
         btn_rm.clicked.connect(lambda: self._remove_subscription("youtube", url))
         self._yt_table.setCellWidget(row, 2, btn_rm)
 
-    def _add_am_row(self, playlist: str) -> None:
+    def _add_am_row(
+        self,
+        display: str,
+        key: str | None = None,
+        sub_type: str = "apple_music",
+        tooltip: str = "",
+    ) -> None:
+        """Add a row to the Apple Music table. ``key`` is the removal key (playlist name or URL)."""
         row = self._am_table.rowCount()
         self._am_table.insertRow(row)
-        self._am_table.setItem(row, 0, QTableWidgetItem(playlist))
-        btn_rm = QPushButton("✕")
-        btn_rm.setFixedSize(24, 22)
+        item = QTableWidgetItem(display)
+        if tooltip:
+            item.setToolTip(tooltip)
+        self._am_table.setItem(row, 0, item)
+        btn_rm = self._make_remove_btn()
+        rm_key = key if key is not None else display
         btn_rm.clicked.connect(
-            lambda: self._remove_subscription("apple_music", playlist))
+            lambda: self._remove_subscription(sub_type, rm_key))
         self._am_table.setCellWidget(row, 1, btn_rm)
 
     def _remove_subscription(self, sub_type: str, key: str) -> None:
@@ -664,6 +761,11 @@ class DownloadsTab(QWidget):
             self._config["subscriptions"] = [
                 s for s in subs
                 if not (s.get("type") == "youtube" and s.get("url") == key)
+            ]
+        elif sub_type == "apple_music_url":
+            self._config["subscriptions"] = [
+                s for s in subs
+                if not (s.get("type") == "apple_music_url" and s.get("url") == key)
             ]
         else:
             self._config["subscriptions"] = [
@@ -683,6 +785,9 @@ class DownloadsTab(QWidget):
                 sources.append(src)
             elif sub.get("type") == "apple_music" and xml:
                 src = AppleMusicSource(xml, sub["playlist"])
+                sources.append(src)
+            elif sub.get("type") == "apple_music_url":
+                src = AppleMusicURLSource(sub["url"], sub.get("label", sub["url"]))
                 sources.append(src)
         return sources
 
@@ -800,8 +905,20 @@ class DownloadsTab(QWidget):
         if path:
             self._xml_edit.setText(path)
         else:
-            self._xml_edit.setPlaceholderText(
-                "Not found — browse manually")
+            QMessageBox.information(
+                self,
+                "iTunes XML Not Found",
+                "Could not auto-detect your iTunes Music Library.xml.\n\n"
+                "Common locations:\n"
+                "  • ~/Music/iTunes/iTunes Music Library.xml\n"
+                "  • ~/Music/Music/Music Library.xml\n\n"
+                "If you use Apple Music for Windows, open Apple Music,\n"
+                "go to Edit → Preferences → Files, and enable\n"
+                "\"Keep Music Media folder organised\".\n\n"
+                "Then use the Browse button to locate the file manually.\n\n"
+                "Tip: For public Apple Music playlists, use\n"
+                "\"+ Add Apple Music URL\" instead.",
+            )
 
     # ------------------------------------------------------------------
     # Config persistence

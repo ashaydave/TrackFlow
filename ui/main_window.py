@@ -1170,24 +1170,31 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _load_single_track(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Audio File", "",
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select Audio Files", "",
             "Audio Files (*.mp3 *.wav *.flac *.m4a *.ogg *.aiff);;All Files (*)"
         )
-        if path:
-            if path not in self._row_map:
-                self.track_table.setSortingEnabled(False)
-                try:
+        if not paths:
+            return
+
+        # Add all selected files that aren't already in the library
+        new_paths = [p for p in paths if p not in self._row_map]
+        if new_paths:
+            self.track_table.setSortingEnabled(False)
+            try:
+                for path in new_paths:
                     row = self.track_table.rowCount()
                     self.track_table.insertRow(row)
                     self._set_row(row, path)
                     self._row_map[path] = row
                     self.library_files.append(path)
-                    self.track_count_label.setText(f"{len(self.library_files)} tracks")
-                finally:
-                    self.track_table.setSortingEnabled(True)
-                    self._rebuild_row_map()   # resort may have moved every row
-            self._start_analysis(path)
+            finally:
+                self.track_table.setSortingEnabled(True)
+                self._rebuild_row_map()
+            self.track_count_label.setText(f"{len(self.library_files)} tracks")
+
+        # Analyze and display the last selected file
+        self._start_analysis(paths[-1])
 
     def _load_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Music Folder")

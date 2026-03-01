@@ -22,11 +22,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 def test_downloader_imports_cleanly():
     """All downloader submodules must import without raising."""
-    from downloader.yt_handler import DownloadWorker, resolve_output_path
+    from downloader.yt_handler import DownloadWorker, resolve_output_path, find_ffmpeg
     from downloader.watcher import FolderWatcher
     from downloader.playlist_sync import (
         YouTubePlaylistSource,
         AppleMusicSource,
+        AppleMusicURLSource,
         PlaylistSyncWorker,
         search_youtube,
         detect_apple_music_xml,
@@ -37,6 +38,10 @@ def test_downloader_imports_cleanly():
     assert FolderWatcher is not None
     assert YouTubePlaylistSource is not None
     assert AppleMusicSource is not None
+    assert AppleMusicURLSource is not None
+    # find_ffmpeg returns a path string or None — either is valid
+    result = find_ffmpeg()
+    assert result is None or isinstance(result, str)
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +218,83 @@ def test_apple_music_source_id():
     from downloader.playlist_sync import AppleMusicSource
     src = AppleMusicSource("/tmp/lib.xml", "My Playlist")
     assert src.source_id == "apple_music::My Playlist"
+
+
+# ---------------------------------------------------------------------------
+# playlist_sync — AppleMusicURLSource (JSON-LD parsing, no network)
+# ---------------------------------------------------------------------------
+
+def test_apple_music_url_source_id():
+    """source_id must include the URL."""
+    from downloader.playlist_sync import AppleMusicURLSource
+    url = "https://music.apple.com/us/playlist/house/pl.u-xyz"
+    src = AppleMusicURLSource(url, "House")
+    assert src.source_id == f"apple_music_url::{url}"
+    assert src.label == "House"
+
+
+def test_apple_music_url_parse_ld_single_artist():
+    """_parse_ld correctly extracts tracks with a dict byArtist."""
+    from downloader.playlist_sync import AppleMusicURLSource
+    data = {
+        "@type": "MusicPlaylist",
+        "track": [
+            {"name": "Xtal",     "byArtist": {"name": "Aphex Twin"}},
+            {"name": "Archangel","byArtist": {"name": "Burial"}},
+        ],
+    }
+    tracks = AppleMusicURLSource._parse_ld(data)
+    assert len(tracks) == 2
+    assert tracks[0]["title"]  == "Xtal"
+    assert tracks[0]["artist"] == "Aphex Twin"
+    assert tracks[0]["id"]     == "Xtal::Aphex Twin"
+    assert tracks[1]["title"]  == "Archangel"
+    assert tracks[1]["artist"] == "Burial"
+
+
+def test_apple_music_url_parse_ld_list_artist():
+    """_parse_ld handles byArtist as a list."""
+    from downloader.playlist_sync import AppleMusicURLSource
+    data = {
+        "@type": "MusicPlaylist",
+        "track": [
+            {"name": "Collab Track", "byArtist": [{"name": "Artist A"}, {"name": "Artist B"}]},
+        ],
+    }
+    tracks = AppleMusicURLSource._parse_ld(data)
+    assert tracks[0]["artist"] == "Artist A"
+
+
+def test_apple_music_url_parse_ld_skips_empty_names():
+    """_parse_ld skips track entries with no name."""
+    from downloader.playlist_sync import AppleMusicURLSource
+    data = {
+        "@type": "MusicPlaylist",
+        "track": [
+            {"name": "",    "byArtist": {"name": "Unknown"}},
+            {"name": "   ", "byArtist": {"name": "Unknown"}},
+            {"name": "Real Track", "byArtist": {"name": "Someone"}},
+        ],
+    }
+    tracks = AppleMusicURLSource._parse_ld(data)
+    assert len(tracks) == 1
+    assert tracks[0]["title"] == "Real Track"
+
+
+def test_apple_music_url_parse_ld_empty_playlist():
+    """_parse_ld returns [] for a playlist with no tracks."""
+    from downloader.playlist_sync import AppleMusicURLSource
+    data = {"@type": "MusicPlaylist", "track": []}
+    assert AppleMusicURLSource._parse_ld(data) == []
+
+
+def test_apple_music_url_source_missing_url_returns_empty():
+    """get_tracks returns [] gracefully for an invalid/unreachable URL."""
+    from downloader.playlist_sync import AppleMusicURLSource
+    src = AppleMusicURLSource("https://localhost:1/does-not-exist", "Test")
+    # Should not raise — just return []
+    result = src.get_tracks()
+    assert result == []
 
 
 # ---------------------------------------------------------------------------

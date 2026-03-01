@@ -165,6 +165,89 @@ class AppleMusicSource:
         return []
 
 
+class AppleMusicURLSource:
+    """
+    Fetches the track list from a public Apple Music playlist URL.
+
+    Parses JSON-LD structured data (MusicPlaylist schema) embedded in the
+    page — works for any public playlist without authentication.
+    For each track found, PlaylistSyncWorker will call search_youtube()
+    to locate a matching YouTube video.
+
+    Parameters
+    ----------
+    url   : Full https://music.apple.com/… playlist URL
+    label : Human-readable name shown in the Queue source column
+    """
+
+    def __init__(self, url: str, label: str = ""):
+        self.url = url
+        self.label = label or "Apple Music"
+        self.source_id = f"apple_music_url::{url}"
+
+    def get_tracks(self) -> list[dict]:
+        """
+        Returns list of dicts: {id, title, artist}.
+        Returns [] on any network or parsing error.
+        """
+        import html as _html  # noqa: F401 (unused but kept for reference)
+        import json
+        import re
+        import urllib.request
+
+        try:
+            req = urllib.request.Request(
+                self.url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                page = resp.read().decode("utf-8", errors="replace")
+        except Exception:
+            return []
+
+        # Apple Music embeds MusicPlaylist schema as JSON-LD in <script> tags
+        for raw in re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            page,
+            re.DOTALL,
+        ):
+            try:
+                data = json.loads(raw)
+                if data.get("@type") == "MusicPlaylist":
+                    return self._parse_ld(data)
+            except Exception:
+                continue
+        return []
+
+    @staticmethod
+    def _parse_ld(data: dict) -> list[dict]:
+        tracks = []
+        for item in data.get("track", []):
+            name = item.get("name", "").strip()
+            if not name:
+                continue
+            by_artist = item.get("byArtist", {})
+            if isinstance(by_artist, dict):
+                artist = by_artist.get("name", "")
+            elif isinstance(by_artist, list) and by_artist:
+                artist = by_artist[0].get("name", "")
+            else:
+                artist = ""
+            tracks.append({
+                "id":     f"{name}::{artist}",
+                "title":  name,
+                "artist": artist,
+            })
+        return tracks
+
+
 def detect_apple_music_xml() -> str | None:
     """
     Auto-detect the Apple Music / iTunes library XML on Windows.
