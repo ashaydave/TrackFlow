@@ -198,7 +198,8 @@ class DownloadsTab(QWidget):
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self._queue_table.setColumnWidth(3, 90)
         self._queue_table.verticalHeader().setDefaultSectionSize(28)
         self._queue_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._queue_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -545,9 +546,14 @@ class DownloadsTab(QWidget):
             self._queue_table.setItem(row, 2, status_item)
 
             btn = QPushButton("⬆ Import")
-            btn.setFixedHeight(22)
+            btn.setFixedSize(88, 22)
+            btn.setStyleSheet(
+                "QPushButton { background: #003d1a; color: #00cc66; border: 1px solid #006622;"
+                " border-radius: 3px; font-size: 11px; font-weight: 600; }"
+                "QPushButton:hover { background: #005522; border-color: #00aa44; }"
+            )
             fp = file_path
-            btn.clicked.connect(lambda: self.import_requested.emit(fp))
+            btn.clicked.connect(lambda _c=False, p=fp: self.import_requested.emit(p))
             self._queue_table.setCellWidget(row, 3, btn)
 
         title = ""
@@ -620,12 +626,13 @@ class DownloadsTab(QWidget):
         ]
 
     def _on_stop_download(self) -> None:
-        """Terminate the active download worker."""
-        if not (self._worker and self._worker.isRunning()):
-            return
-        self._worker.terminate()
-        self._worker.wait(3000)
-        # Mark active item as cancelled in table
+        """Stop current download and cancel ALL pending items in the queue."""
+        # 1) Terminate the active worker
+        if self._worker and self._worker.isRunning():
+            self._worker.terminate()
+            self._worker.wait(3000)
+
+        # 2) Mark active item as Cancelled in the table
         if self._active_url:
             for item in self._queue:
                 if item["url"] == self._active_url and item["status"] == _STATUS_DOWNLOADING:
@@ -635,16 +642,29 @@ class DownloadsTab(QWidget):
                         si = QTableWidgetItem("✕ Cancelled")
                         si.setForeground(_COLOR_ERROR)
                         self._queue_table.setItem(row, 2, si)
-                        # Restore remove button
                         q_idx = self._queue_idx_for_row(row)
                         if q_idx >= 0:
                             self._queue_table.setCellWidget(
                                 row, 3, self._make_queue_item_remove_btn(q_idx))
                     break
+
+        # 3) Cancel ALL pending items so the queue won't auto-resume
+        for row in range(self._queue_table.rowCount()):
+            status_item = self._queue_table.item(row, 2)
+            if status_item and status_item.text() == _STATUS_PENDING:
+                si = QTableWidgetItem("✕ Cancelled")
+                si.setForeground(_COLOR_ERROR)
+                self._queue_table.setItem(row, 2, si)
+                q_idx = self._queue_idx_for_row(row)
+                if q_idx >= 0 and q_idx < len(self._queue):
+                    self._queue[q_idx]["status"] = "✕ Cancelled"
+                    self._queue_table.setCellWidget(
+                        row, 3, self._make_queue_item_remove_btn(q_idx))
+
         self._worker = None
         self._active_url = None
         self.btn_stop.setEnabled(False)
-        self._start_next_download()
+        # Don't call _start_next_download — user explicitly stopped everything
 
     def _on_remove_selected(self) -> None:
         """Remove selected rows from the queue (non-active only)."""
@@ -790,6 +810,7 @@ class DownloadsTab(QWidget):
         worker = PlaylistSyncWorker(sources, load_sync_state())
         worker.new_track.connect(self._on_sync_new_track)
         worker.track_not_found.connect(self._on_sync_not_found)
+        worker.source_error.connect(self._on_sync_source_error)
         worker.all_done.connect(self._on_sync_all_done)
         self._sync_worker = worker
         worker.start()
@@ -817,13 +838,32 @@ class DownloadsTab(QWidget):
         self.btn_sync.setEnabled(True)
         found = len([item for item in self._queue
                      if item["source_label"] != "Manual"])
-        self._sync_status_lbl.setText(
-            f"Sync complete — {found} new track(s) queued."
-        )
-        self.notify.emit("Playlist sync complete",
-                         f"{found} new track(s) added to queue")
         if found > 0:
+            self._sync_status_lbl.setText(
+                f"✓ Sync complete — {found} new track(s) queued.")
+            self._sync_status_lbl.setStyleSheet("color: #00cc66; font-size: 12px;")
+            self.notify.emit("Playlist sync complete",
+                             f"{found} new track(s) added to queue")
             self._start_next_download()
+        else:
+            # Only update label if no error message already set
+            current = self._sync_status_lbl.text()
+            if not current.startswith("⚠"):
+                self._sync_status_lbl.setText("Sync complete — 0 new tracks.")
+                self._sync_status_lbl.setStyleSheet("")
+
+    def _on_sync_source_error(self, source_id: str, message: str) -> None:
+        """Show a prominent warning when a source fails to fetch its track list."""
+        # Find a friendly label for this source from config
+        label = source_id
+        for sub in self._config.get("subscriptions", []):
+            sid = (sub.get("url") or sub.get("playlist") or "")
+            if sid and (sid in source_id or source_id.endswith(sid)):
+                label = sub.get("label") or sub.get("playlist") or label
+                break
+        self._sync_status_lbl.setText(f"⚠ '{label}': {message}")
+        self._sync_status_lbl.setStyleSheet("color: #ffaa00; font-size: 11px;")
+        self._sync_status_lbl.setWordWrap(True)
 
     def _on_retry_not_found(self) -> None:
         rows = sorted({idx.row() for idx in self._nf_table.selectedIndexes()},
@@ -1100,6 +1140,7 @@ class DownloadsTab(QWidget):
         worker = PlaylistSyncWorker(sources, load_sync_state())
         worker.new_track.connect(self._on_sync_new_track)
         worker.track_not_found.connect(self._on_sync_not_found)
+        worker.source_error.connect(self._on_sync_source_error)
         worker.all_done.connect(self._on_sync_all_done)
         self._sync_worker = worker
         worker.start()

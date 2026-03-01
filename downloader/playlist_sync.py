@@ -180,92 +180,241 @@ class AppleMusicURLSource:
     label : Human-readable name shown in the Queue source column
     """
 
+    # Class-level token cache — shared across all instances so we only fetch once per session
+    _cached_token: str | None = None
+
     def __init__(self, url: str, label: str = ""):
         self.url = url
         self.label = label or "Apple Music"
         self.source_id = f"apple_music_url::{url}"
+        self.last_error: str | None = None  # set on fetch failure
 
     def get_tracks(self) -> list[dict]:
         """
         Returns list of dicts: {id, title, artist}.
-        Tries yt-dlp's Apple Music extractor first; falls back to JSON-LD scraping.
-        Returns [] on any error.
+        Tries three approaches in order:
+          1. Apple Music catalog API using the bearer token embedded in the web app HTML
+          2. JSON-LD / Next.js data in the page source (SSR fallback)
+          3. yt-dlp (unlikely to work for music.apple.com but harmless to try)
+        Sets self.last_error if all approaches fail.
         """
-        # 1) yt-dlp — handles Apple Music natively in recent versions
-        tracks = self._try_ytdlp()
-        if tracks:
-            return tracks
-        # 2) JSON-LD scraping of the public page
-        return self._fetch_json_ld()
+        self.last_error = None
 
-    def _try_ytdlp(self) -> list[dict]:
-        opts = {"quiet": True, "extract_flat": True, "no_warnings": True}
+        tracks = self._try_apple_api()
+        if tracks is not None:
+            return tracks
+
+        tracks = self._try_page_scrape()
+        if tracks is not None:
+            return tracks
+
+        # yt-dlp last — it doesn't support music.apple.com playlists but costs little to try
         try:
+            opts = {"quiet": True, "extract_flat": True, "no_warnings": True}
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(self.url, download=False)
-            if not info:
-                return []
+                info = ydl.extract_info(self.url, download=False) or {}
             entries = info.get("entries") or []
-            if entries:
-                result = []
-                for e in entries:
-                    title = (e.get("title") or "").strip()
-                    if not title:
-                        continue
-                    artist = (
-                        e.get("artist") or e.get("creator") or e.get("uploader") or ""
-                    ).strip()
-                    result.append({
-                        "id":     e.get("id") or f"{title}::{artist}",
-                        "title":  title,
-                        "artist": artist,
-                    })
+            result = []
+            for e in entries:
+                title = (e.get("title") or "").strip()
+                if title:
+                    artist = (e.get("artist") or e.get("creator") or e.get("uploader") or "").strip()
+                    result.append({"id": e.get("id") or f"{title}::{artist}",
+                                   "title": title, "artist": artist})
+            if result:
                 return result
-            # Single track (not a playlist)
-            title = (info.get("title") or "").strip()
-            if title:
-                artist = (
-                    info.get("artist") or info.get("creator") or info.get("uploader") or ""
-                ).strip()
-                return [{"id": info.get("id") or title, "title": title, "artist": artist}]
         except Exception:
             pass
+
+        self.last_error = (
+            "Could not fetch tracks — check that the playlist is public, "
+            "or try 'Add via iTunes XML' for local Apple Music playlists."
+        )
         return []
 
-    def _fetch_json_ld(self) -> list[dict]:
-        """Fetch the public Apple Music page and parse its JSON-LD MusicPlaylist schema."""
+    # ------------------------------------------------------------------
+    # Approach 1: Apple Music catalog API + embedded bearer token
+    # ------------------------------------------------------------------
+
+    def _try_apple_api(self) -> list[dict] | None:
+        """
+        Use the Apple Music catalog API.
+        The homepage embeds a short-lived JWT bearer token in a <meta> tag;
+        this token is sufficient to read public playlist contents.
+        Returns None if the approach fails entirely, [] if the playlist is empty.
+        """
         import json
         import re
         import urllib.request
 
+        token = self._get_apple_token()
+        if not token:
+            return None
+
+        # Extract storefront and playlist ID from the URL
+        m = re.search(r'music\.apple\.com/([a-z]{2})/playlist/[^/]+/(pl\.[^?/\s]+)', self.url)
+        if not m:
+            return None
+        storefront, playlist_id = m.group(1), m.group(2)
+
+        tracks: list[dict] = []
+        next_url: str | None = (
+            f"https://amp-api.music.apple.com/v1/catalog/{storefront}"
+            f"/playlists/{playlist_id}/tracks?limit=100"
+        )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Origin": "https://music.apple.com",
+            "Referer": "https://music.apple.com/",
+        }
+
+        for _ in range(10):  # follow up to 10 pages
+            if not next_url:
+                break
+            if not next_url.startswith("http"):
+                next_url = "https://amp-api.music.apple.com" + next_url
+            try:
+                req = urllib.request.Request(next_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode())
+            except Exception:
+                break
+            for item in data.get("data", []):
+                attrs = item.get("attributes", {})
+                name = (attrs.get("name") or "").strip()
+                artist = (attrs.get("artistName") or "").strip()
+                if name:
+                    tracks.append({
+                        "id":     item.get("id") or f"{name}::{artist}",
+                        "title":  name,
+                        "artist": artist,
+                    })
+            next_url = data.get("next")
+
+        return tracks  # may be [] if playlist is genuinely empty
+
+    @classmethod
+    def _get_apple_token(cls) -> str | None:
+        """
+        Fetch the Apple Music home page and extract the embedded bearer token.
+        The token is stored in a <meta name="desktop-music-app/config/amp-authorization">
+        tag and is valid for several hours.  Result is cached at class level.
+        """
+        import re
+        import urllib.request
+
+        if cls._cached_token:
+            return cls._cached_token
+
         try:
             req = urllib.request.Request(
-                self.url,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/120.0.0.0 Safari/537.36"
-                    ),
-                    "Accept-Language": "en-US,en;q=0.9",
-                },
+                "https://music.apple.com/",
+                headers={"User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )},
             )
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 page = resp.read().decode("utf-8", errors="replace")
         except Exception:
-            return []
+            return None
 
-        for raw in re.findall(
-            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-            page,
-            re.DOTALL,
-        ):
+        # Primary: dedicated meta tag
+        for pat in [
+            r'name="desktop-music-app/config/amp-authorization"\s+content="([^"]+)"',
+            r'content="([^"]+)"\s+name="desktop-music-app/config/amp-authorization"',
+        ]:
+            m = re.search(pat, page)
+            if m:
+                cls._cached_token = m.group(1)
+                return cls._cached_token
+
+        # Fallback: JWT pattern (eyJ…) anywhere in page scripts
+        m = re.search(r'"(eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,})"', page)
+        if m:
+            cls._cached_token = m.group(1)
+            return cls._cached_token
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Approach 2: Page scraping (JSON-LD / Next.js SSR data)
+    # ------------------------------------------------------------------
+
+    def _try_page_scrape(self) -> list[dict] | None:
+        """
+        Fetch the public playlist page and look for track data in:
+          - JSON-LD <script type="application/ld+json"> (MusicPlaylist schema)
+          - Next.js __NEXT_DATA__ hydration blob
+        Returns None if the fetch itself fails, [] if found but no tracks.
+        """
+        import json
+        import re
+        import urllib.request
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+        for url in [self.url, self.url.replace("music.apple.com", "embed.music.apple.com")]:
             try:
-                data = json.loads(raw)
-                if data.get("@type") == "MusicPlaylist":
-                    return self._parse_ld(data)
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    page = resp.read().decode("utf-8", errors="replace")
             except Exception:
                 continue
+
+            # JSON-LD MusicPlaylist
+            for raw in re.findall(
+                r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+                page, re.DOTALL,
+            ):
+                try:
+                    data = json.loads(raw)
+                    if data.get("@type") == "MusicPlaylist":
+                        return self._parse_ld(data)
+                except Exception:
+                    continue
+
+            # Next.js __NEXT_DATA__
+            m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', page, re.DOTALL)
+            if m:
+                try:
+                    result = self._extract_tracks_from_json(json.loads(m.group(1)))
+                    if result:
+                        return result
+                except Exception:
+                    pass
+
+        return None  # page fetch failed or no data found
+
+    @staticmethod
+    def _extract_tracks_from_json(obj, _depth: int = 0) -> list[dict]:
+        """Recursively hunt for track-like objects in arbitrary JSON."""
+        if _depth > 12 or not obj:
+            return []
+        if isinstance(obj, dict):
+            name = (obj.get("name") or obj.get("trackName") or "")
+            if (isinstance(name, str) and name and
+                    any(k in obj for k in ("trackNumber", "isrc", "albumName",
+                                           "artistName", "discNumber", "duration"))):
+                artist = (obj.get("artistName") or obj.get("artist") or "")
+                if isinstance(artist, dict):
+                    artist = artist.get("name", "")
+                return [{"id": f"{name}::{artist}", "title": name, "artist": str(artist)}]
+            results: list[dict] = []
+            for v in obj.values():
+                results.extend(AppleMusicURLSource._extract_tracks_from_json(v, _depth + 1))
+            return results
+        if isinstance(obj, list):
+            results = []
+            for item in obj:
+                results.extend(AppleMusicURLSource._extract_tracks_from_json(item, _depth + 1))
+            return results
         return []
 
     @staticmethod
@@ -355,6 +504,7 @@ class PlaylistSyncWorker(QThread):
     new_track       = pyqtSignal(dict)
     track_not_found = pyqtSignal(dict)
     source_done     = pyqtSignal(str, int)
+    source_error    = pyqtSignal(str, str)   # source_id, error_message
     all_done        = pyqtSignal()
 
     def __init__(
@@ -371,6 +521,10 @@ class PlaylistSyncWorker(QThread):
     def run(self) -> None:
         for source in self._sources:
             tracks = source.get_tracks()
+            # Surface fetch errors to the UI
+            last_err = getattr(source, "last_error", None)
+            if last_err:
+                self.source_error.emit(source.source_id, last_err)
             known_ids = self._known_ids_for(source.source_id)
             new_count = 0
 
