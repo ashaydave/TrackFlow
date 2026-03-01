@@ -148,6 +148,19 @@ class DownloadsTab(QWidget):
         self.btn_download_all.clicked.connect(self._on_download_all)
         ctrl_row.addWidget(self.btn_download_all)
 
+        self.btn_stop = QPushButton("⏹  Stop")
+        self.btn_stop.setFixedWidth(80)
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.setToolTip("Stop the current download")
+        self.btn_stop.clicked.connect(self._on_stop_download)
+        self.btn_stop.setStyleSheet(
+            "QPushButton { background: #3a1a1a; color: #ff8866; border: 1px solid #662222;"
+            " border-radius: 4px; padding: 6px 10px; }"
+            "QPushButton:hover { background: #5a2222; border-color: #cc4444; }"
+            "QPushButton:disabled { color: #445566; border-color: #1a2233; background: #0f0f1a; }"
+        )
+        ctrl_row.addWidget(self.btn_stop)
+
         lay.addLayout(ctrl_row)
 
         # Output folder row
@@ -193,10 +206,16 @@ class DownloadsTab(QWidget):
 
         # Bottom action row
         bottom_row = QHBoxLayout()
-        btn_import_sel = QPushButton("⬆  Import Selected (Done)")
+        btn_import_sel = QPushButton("⬆  Import Selected")
+        btn_import_sel.setToolTip("Import selected done items into library (or all done if none selected)")
         btn_import_sel.clicked.connect(self._on_import_selected)
         bottom_row.addWidget(btn_import_sel)
+        btn_remove_sel = QPushButton("✕  Remove Selected")
+        btn_remove_sel.setToolTip("Remove selected rows from queue")
+        btn_remove_sel.clicked.connect(self._on_remove_selected)
+        bottom_row.addWidget(btn_remove_sel)
         btn_clear = QPushButton("Clear Done")
+        btn_clear.setToolTip("Remove all completed rows from queue")
         btn_clear.clicked.connect(self._on_clear_done)
         bottom_row.addWidget(btn_clear)
         bottom_row.addStretch()
@@ -242,24 +261,27 @@ class DownloadsTab(QWidget):
         am_lay   = QVBoxLayout(am_group)
         am_lay.setSpacing(6)
 
-        xml_row = QHBoxLayout()
-        xml_row.addWidget(QLabel("Library XML:"))
+        # Primary: URL quick-add row
+        url_row = QHBoxLayout()
+        url_row.addWidget(QLabel("Playlist URL:"))
+        self._am_url_edit = QLineEdit()
+        self._am_url_edit.setPlaceholderText(
+            "Paste a music.apple.com playlist URL and press Enter…")
+        self._am_url_edit.returnPressed.connect(self._on_quick_add_am_url)
+        url_row.addWidget(self._am_url_edit, stretch=1)
+        btn_am_quick_add = QPushButton("+ Add")
+        btn_am_quick_add.setFixedWidth(72)
+        btn_am_quick_add.clicked.connect(self._on_quick_add_am_url)
+        url_row.addWidget(btn_am_quick_add)
+        am_lay.addLayout(url_row)
+
+        # Hidden XML field — still used internally by _build_sources for XML-based playlists
         self._xml_edit = QLineEdit()
-        self._xml_edit.setPlaceholderText("Path to iTunes Music Library.xml…")
         self._xml_edit.setText(self._config.get("apple_music_xml", ""))
         self._xml_edit.textChanged.connect(
             lambda t: self._config.__setitem__("apple_music_xml", t) or self._save_config()
         )
-        xml_row.addWidget(self._xml_edit, stretch=1)
-        btn_xml_browse = QPushButton("Browse")
-        btn_xml_browse.setFixedWidth(72)
-        btn_xml_browse.clicked.connect(self._browse_xml)
-        xml_row.addWidget(btn_xml_browse)
-        btn_xml_detect = QPushButton("Detect")
-        btn_xml_detect.setFixedWidth(72)
-        btn_xml_detect.clicked.connect(self._detect_xml)
-        xml_row.addWidget(btn_xml_detect)
-        am_lay.addLayout(xml_row)
+        self._xml_edit.setVisible(False)  # hidden — managed via secondary button below
 
         self._am_table = QTableWidget(0, 2)
         self._am_table.setHorizontalHeaderLabels(["Playlist", ""])
@@ -272,32 +294,48 @@ class DownloadsTab(QWidget):
         self._am_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         am_lay.addWidget(self._am_table)
 
+        # Secondary: iTunes XML option (less prominent)
         am_btn_row = QHBoxLayout()
-        btn_add_am = QPushButton("+ Add Playlist (XML)")
-        btn_add_am.setToolTip(
-            "Add a playlist by name from your iTunes / Apple Music XML library file")
-        btn_add_am.clicked.connect(self._on_add_am_playlist)
-        am_btn_row.addWidget(btn_add_am)
-        btn_add_am_url = QPushButton("+ Add Apple Music URL")
-        btn_add_am_url.setToolTip(
-            "Subscribe to a public Apple Music playlist via its music.apple.com URL")
-        btn_add_am_url.clicked.connect(self._on_add_am_url)
-        am_btn_row.addWidget(btn_add_am_url)
+        btn_add_am_xml = QPushButton("+ Add via iTunes XML…")
+        btn_add_am_xml.setToolTip(
+            "Add a playlist by name from your iTunes / Apple Music local XML library file.\n"
+            "Use this if you have Apple Music for Windows and need to read your local library.")
+        btn_add_am_xml.setStyleSheet(
+            "QPushButton { color: #8899bb; font-size: 11px; border-color: #1a2233; }")
+        btn_add_am_xml.clicked.connect(self._on_add_am_playlist)
+        am_btn_row.addWidget(btn_add_am_xml)
         am_btn_row.addStretch()
         am_lay.addLayout(am_btn_row)
         lay.addWidget(am_group)
 
         # ── Sync controls ──────────────────────────────────────────────
         sync_row = QHBoxLayout()
-        self.btn_sync = QPushButton("🔄  Sync All Subscriptions Now")
+        self.btn_sync = QPushButton("🔄  Sync Now")
         self.btn_sync.setObjectName("btn_primary")
         self.btn_sync.clicked.connect(self._on_sync_now)
         sync_row.addWidget(self.btn_sync)
+
+        btn_clear_cache = QPushButton("🗑  Clear Cache")
+        btn_clear_cache.setToolTip(
+            "Reset sync history — every track in your playlists will be\n"
+            "treated as new and re-queued on the next sync.\n\n"
+            "Use this if a playlist sync said '0 new tracks' but you\n"
+            "expected tracks to appear (e.g. after testing).")
+        btn_clear_cache.clicked.connect(self._on_clear_sync_cache)
+        sync_row.addWidget(btn_clear_cache)
+
         self._sync_status_lbl = QLabel("")
         self._sync_status_lbl.setObjectName("meta_text")
         sync_row.addWidget(self._sync_status_lbl)
         sync_row.addStretch()
         lay.addLayout(sync_row)
+
+        cache_hint = QLabel(
+            "ℹ  Already-synced tracks are remembered so they won't re-queue on every launch. "
+            "Click \"🗑 Clear Cache\" to reset.")
+        cache_hint.setStyleSheet("color: #556677; font-size: 11px;")
+        cache_hint.setWordWrap(True)
+        lay.addWidget(cache_hint)
 
         # ── Not found on YouTube ───────────────────────────────────────
         nf_group = QGroupBox("⚠  Not Found on YouTube")
@@ -412,15 +450,18 @@ class DownloadsTab(QWidget):
         row = self._queue_table.rowCount()
         self._queue_table.insertRow(row)
 
+        q_idx = len(self._queue) - 1
         title_item = QTableWidgetItem(item["title"])
         title_item.setToolTip(url)
-        title_item.setData(Qt.ItemDataRole.UserRole, len(self._queue) - 1)  # queue index
+        title_item.setData(Qt.ItemDataRole.UserRole, q_idx)
         self._queue_table.setItem(row, 0, title_item)
         self._queue_table.setItem(row, 1, QTableWidgetItem(source_label))
         status_item = QTableWidgetItem(_STATUS_PENDING)
         status_item.setForeground(_COLOR_PENDING)
         self._queue_table.setItem(row, 2, status_item)
-        self._queue_table.setItem(row, 3, QTableWidgetItem(""))
+        # ✕ remove button for pending rows
+        btn_rm = self._make_queue_item_remove_btn(q_idx)
+        self._queue_table.setCellWidget(row, 3, btn_rm)
 
     def _on_download_all(self) -> None:
         self._start_next_download()
@@ -454,6 +495,11 @@ class DownloadsTab(QWidget):
             status_item = QTableWidgetItem("⬇  0%")
             status_item.setForeground(_COLOR_ACTIVE)
             self._queue_table.setItem(row, 2, status_item)
+            # Replace ✕ with a cancel hint while downloading
+            self._queue_table.removeCellWidget(row, 3)
+            self._queue_table.setItem(row, 3, QTableWidgetItem(""))
+
+        self.btn_stop.setEnabled(True)
 
         worker = DownloadWorker(
             item["url"], output_dir,
@@ -513,6 +559,7 @@ class DownloadsTab(QWidget):
 
         self._worker = None
         self._active_url = None
+        self.btn_stop.setEnabled(False)
         self._start_next_download()
 
     def _on_dl_error(self, url: str, message: str) -> None:
@@ -544,6 +591,7 @@ class DownloadsTab(QWidget):
 
         self._worker = None
         self._active_url = None
+        self.btn_stop.setEnabled(False)
         self._start_next_download()
 
     def _on_import_selected(self) -> None:
@@ -571,6 +619,74 @@ class DownloadsTab(QWidget):
             if item["status"] != _STATUS_DONE
         ]
 
+    def _on_stop_download(self) -> None:
+        """Terminate the active download worker."""
+        if not (self._worker and self._worker.isRunning()):
+            return
+        self._worker.terminate()
+        self._worker.wait(3000)
+        # Mark active item as cancelled in table
+        if self._active_url:
+            for item in self._queue:
+                if item["url"] == self._active_url and item["status"] == _STATUS_DOWNLOADING:
+                    item["status"] = "✕ Cancelled"
+                    row = self._row_for_active_url(self._active_url)
+                    if row >= 0:
+                        si = QTableWidgetItem("✕ Cancelled")
+                        si.setForeground(_COLOR_ERROR)
+                        self._queue_table.setItem(row, 2, si)
+                        # Restore remove button
+                        q_idx = self._queue_idx_for_row(row)
+                        if q_idx >= 0:
+                            self._queue_table.setCellWidget(
+                                row, 3, self._make_queue_item_remove_btn(q_idx))
+                    break
+        self._worker = None
+        self._active_url = None
+        self.btn_stop.setEnabled(False)
+        self._start_next_download()
+
+    def _on_remove_selected(self) -> None:
+        """Remove selected rows from the queue (non-active only)."""
+        selected_rows = sorted(
+            {idx.row() for idx in self._queue_table.selectedIndexes()},
+            reverse=True,
+        )
+        if not selected_rows:
+            return
+        for row in selected_rows:
+            q_idx = self._queue_idx_for_row(row)
+            if q_idx >= 0:
+                item = self._queue[q_idx]
+                if item["status"] == _STATUS_DOWNLOADING:
+                    continue  # skip active download — use Stop first
+                item["status"] = "__removed__"
+            self._queue_table.removeRow(row)
+
+    def _make_queue_item_remove_btn(self, q_idx: int) -> QPushButton:
+        """Tiny transparent ✕ button for pending/cancelled queue rows."""
+        btn = QPushButton("✕")
+        btn.setFixedSize(30, 22)
+        btn.setToolTip("Remove from queue")
+        btn.setStyleSheet(
+            "QPushButton { color: #556677; border: none; background: transparent; font-size: 13px; }"
+            "QPushButton:hover { color: #ff6666; }"
+        )
+        btn.clicked.connect(lambda _checked=False, idx=q_idx: self._remove_queue_item_by_idx(idx))
+        return btn
+
+    def _remove_queue_item_by_idx(self, q_idx: int) -> None:
+        """Remove a queue item by its stored index (only if not currently downloading)."""
+        if q_idx >= len(self._queue):
+            return
+        item = self._queue[q_idx]
+        if item["status"] == _STATUS_DOWNLOADING:
+            return  # can't remove active — use Stop first
+        item["status"] = "__removed__"
+        row = self._row_for_queue_idx(q_idx)
+        if row >= 0:
+            self._queue_table.removeRow(row)
+
     # ------------------------------------------------------------------
     # Subscriptions tab — actions
     # ------------------------------------------------------------------
@@ -591,10 +707,26 @@ class DownloadsTab(QWidget):
         self._refresh_subscription_tables()
 
     def _on_add_am_playlist(self) -> None:
+        """Add an Apple Music playlist by name via local iTunes XML (secondary/advanced)."""
         if not self._xml_edit.text().strip():
-            self._detect_xml()
-            if not self._xml_edit.text().strip():
-                return
+            # Try auto-detect first
+            path = detect_apple_music_xml()
+            if path:
+                self._xml_edit.setText(path)
+            else:
+                # Auto-detect failed — let user browse directly
+                f, _ = QFileDialog.getOpenFileName(
+                    self, "Open iTunes Music Library XML",
+                    str(Path.home()),
+                    "XML Files (*.xml);;All Files (*)")
+                if not f:
+                    QMessageBox.information(
+                        self, "No iTunes XML",
+                        "Could not find your iTunes Music Library.xml.\n\n"
+                        "Tip: For public Apple Music playlists, paste the\n"
+                        "music.apple.com URL into the Playlist URL field instead.")
+                    return
+                self._xml_edit.setText(f)
         name, ok = QInputDialog.getText(
             self, "Apple Music Playlist",
             "Playlist name (exactly as in Apple Music, e.g. 'Shazam Library'):")
@@ -605,30 +737,46 @@ class DownloadsTab(QWidget):
         self._save_config()
         self._refresh_subscription_tables()
 
-    def _on_add_am_url(self) -> None:
-        url, ok = QInputDialog.getText(
-            self,
-            "Add Apple Music Playlist URL",
-            "Paste the music.apple.com playlist URL:\n"
-            "(e.g. https://music.apple.com/us/playlist/house/pl.u-…)")
-        if not ok or not url.strip():
+    def _on_quick_add_am_url(self) -> None:
+        """Quick-add an Apple Music URL from the URL field (no dialog needed)."""
+        url = self._am_url_edit.text().strip()
+        if not url:
             return
-        url = url.strip()
         if "music.apple.com" not in url:
             QMessageBox.warning(
                 self, "Invalid URL",
                 "Please paste a music.apple.com URL.\n"
                 "Example: https://music.apple.com/us/playlist/house/pl.u-…")
             return
-        label, ok2 = QInputDialog.getText(
-            self, "Label", "Name for this playlist (shown in queue Source column):")
-        if not ok2:
+        # Ask for a friendly label
+        label, ok = QInputDialog.getText(
+            self, "Playlist Label",
+            "Name for this playlist (shown in the queue Source column):",
+            text=url.rstrip("/").split("/")[-2] if "/" in url else "Apple Music")
+        if not ok:
             return
         label = label.strip() or url
         subs = self._config.setdefault("subscriptions", [])
+        # Avoid duplicates
+        if any(s.get("url") == url for s in subs):
+            QMessageBox.information(self, "Already Added", "This playlist is already subscribed.")
+            return
         subs.append({"type": "apple_music_url", "url": url, "label": label})
         self._save_config()
+        self._am_url_edit.clear()
         self._refresh_subscription_tables()
+
+    def _on_add_am_url(self) -> None:
+        """Legacy dialog-based Apple Music URL add (kept for internal compatibility)."""
+        self._on_quick_add_am_url()
+
+    def _on_clear_sync_cache(self) -> None:
+        """Reset sync state so all playlist tracks re-queue on next sync."""
+        from downloader.playlist_sync import save_sync_state
+        save_sync_state({})
+        self._sync_status_lbl.setText(
+            "✓ Cache cleared — all tracks will re-queue on next sync.")
+        self._sync_status_lbl.setStyleSheet("color: #00cc66; font-size: 12px;")
 
     def _on_sync_now(self) -> None:
         if self._sync_worker and self._sync_worker.isRunning():

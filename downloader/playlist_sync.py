@@ -188,9 +188,52 @@ class AppleMusicURLSource:
     def get_tracks(self) -> list[dict]:
         """
         Returns list of dicts: {id, title, artist}.
-        Returns [] on any network or parsing error.
+        Tries yt-dlp's Apple Music extractor first; falls back to JSON-LD scraping.
+        Returns [] on any error.
         """
-        import html as _html  # noqa: F401 (unused but kept for reference)
+        # 1) yt-dlp — handles Apple Music natively in recent versions
+        tracks = self._try_ytdlp()
+        if tracks:
+            return tracks
+        # 2) JSON-LD scraping of the public page
+        return self._fetch_json_ld()
+
+    def _try_ytdlp(self) -> list[dict]:
+        opts = {"quiet": True, "extract_flat": True, "no_warnings": True}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(self.url, download=False)
+            if not info:
+                return []
+            entries = info.get("entries") or []
+            if entries:
+                result = []
+                for e in entries:
+                    title = (e.get("title") or "").strip()
+                    if not title:
+                        continue
+                    artist = (
+                        e.get("artist") or e.get("creator") or e.get("uploader") or ""
+                    ).strip()
+                    result.append({
+                        "id":     e.get("id") or f"{title}::{artist}",
+                        "title":  title,
+                        "artist": artist,
+                    })
+                return result
+            # Single track (not a playlist)
+            title = (info.get("title") or "").strip()
+            if title:
+                artist = (
+                    info.get("artist") or info.get("creator") or info.get("uploader") or ""
+                ).strip()
+                return [{"id": info.get("id") or title, "title": title, "artist": artist}]
+        except Exception:
+            pass
+        return []
+
+    def _fetch_json_ld(self) -> list[dict]:
+        """Fetch the public Apple Music page and parse its JSON-LD MusicPlaylist schema."""
         import json
         import re
         import urllib.request
@@ -212,7 +255,6 @@ class AppleMusicURLSource:
         except Exception:
             return []
 
-        # Apple Music embeds MusicPlaylist schema as JSON-LD in <script> tags
         for raw in re.findall(
             r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
             page,
