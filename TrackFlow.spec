@@ -12,6 +12,7 @@ a = Analysis(
         ('assets', 'assets'),
     ],
     hiddenimports=[
+        # Core audio / analysis
         'pygame',
         'pygame.mixer',
         'soundfile',
@@ -23,6 +24,7 @@ a = Analysis(
         'scipy.fft',
         'scipy.fftpack',
         'numpy',
+        # App modules — Phase 1
         'paths',
         'analyzer',
         'analyzer.audio_analyzer',
@@ -33,6 +35,25 @@ a = Analysis(
         'ui.waveform_dj',
         'ui.audio_player',
         'ui.styles',
+        # App modules — Phase 2 (Downloads)
+        'downloader',
+        'downloader.yt_handler',
+        'downloader.watcher',
+        'downloader.playlist_sync',
+        'ui.downloads_tab',
+        # yt-dlp (YouTube downloads + Apple Music search)
+        'yt_dlp',
+        'yt_dlp.extractor',
+        'yt_dlp.extractor.youtube',
+        'yt_dlp.postprocessor',
+        'yt_dlp.postprocessor.ffmpeg',
+        # watchdog (SoulSeek folder watcher)
+        'watchdog',
+        'watchdog.observers',
+        'watchdog.observers.polling',
+        'watchdog.events',
+        'watchdog.utils',
+        'watchdog.utils.dirsnapshot',
     ],
     hookspath=[],
     hooksconfig={},

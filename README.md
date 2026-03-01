@@ -49,7 +49,7 @@
 - Volume slider, play/pause, and keyboard-driven seeking
 
 ### 📚 Library & Playlists
-- Load individual tracks or entire folders (recursive scan)
+- Load individual tracks or entire folders (recursive scan); **multi-file select** supported
 - Sortable columns: track name, BPM, key (Camelot order), energy level
 - Low-bitrate flag on tracks below 320 kbps
 - Search/filter across library
@@ -61,22 +61,25 @@
 
 #### YouTube
 - Paste any YouTube video or playlist URL into the **Queue** tab
-- Downloads best-quality audio (m4a) in the background — **no ffmpeg required**
-- Per-row progress indicator; Import button appears on completion
+- Downloads as **MP3 320 kbps** when ffmpeg is detected (auto-detected in common install paths); falls back to native m4a if ffmpeg is unavailable
+- Per-row progress indicator with format badge; **Import** button appears on completion
+- **⏹ Stop** cancels all active and pending queue items at once
+- Per-row **✕** button and **✕ Remove Selected** to clear finished or unwanted entries
 - Bulk **Import Selected** adds finished tracks to the library and auto-triggers analysis
 
 #### Playlist Subscriptions
-Subscribe to YouTube playlists or Apple Music / Shazam playlists. On every app launch, TrackFlow checks for new additions and queues them automatically.
+Subscribe to YouTube playlists or Apple Music playlists. On every app launch, TrackFlow checks for new additions and queues them automatically.
 
 | Source | How it works |
 |---|---|
 | **YouTube Playlist** | yt-dlp `extract_flat` fetches the playlist index; new video IDs are downloaded directly |
-| **Apple Music** | Parses the `iTunes Music Library.xml` written by Apple Music for Windows (zero extra deps — uses Python stdlib `plistlib`) |
-| **Shazam** | Shazam syncs to Apple Music — enable the Apple Music integration and add the "Shazam Library" playlist |
+| **Apple Music URL** | Paste any public `music.apple.com` playlist URL — TrackFlow extracts the anonymous JWT developer token from Apple's web-player JS bundle and calls the Apple Music catalog API to list tracks |
+| **iTunes XML** | Parses the `iTunes Music Library.xml` written by Apple Music for Windows (uses Python stdlib `plistlib`) — works for private/personal playlists not accessible via URL |
+| **Shazam** | Shazam syncs to Apple Music — enable the Apple Music integration and add the "Shazam Library" playlist via iTunes XML |
 
 For Apple Music and Shazam tracks, TrackFlow searches YouTube using three query variants (`Artist - Title`, `Title Artist`, `Artist Title official audio`) and downloads the best match. Tracks not found on YouTube are shown in a **Not Found** table for manual retry.
 
-Sync state is persisted in `data/sync_state.json` — already-downloaded tracks are never re-queued.
+Sync state is persisted in `data/sync_state.json` — already-downloaded tracks are never re-queued. Use **🗑 Clear Cache** next to any subscription to reset its sync history (useful when testing or re-downloading a playlist).
 
 #### SoulSeek Watcher
 - Point TrackFlow at your SoulSeek "completed downloads" folder
@@ -109,6 +112,7 @@ Sync state is persisted in `data/sync_state.json` — already-downloaded tracks 
 
 - Python 3.11+
 - Conda (recommended) or pip
+- **ffmpeg** (optional) — required for MP3 320 kbps output. TrackFlow auto-detects it from your PATH and common install locations; without it, downloads fall back to m4a.
 
 ### Installation
 
@@ -118,8 +122,8 @@ git clone https://github.com/ashaydave/TrackFlow.git
 cd TrackFlow
 
 # Create conda environment
-conda create -n trackflow python=3.11 -y
-conda activate trackflow
+conda create -n dj-analyzer python=3.11 -y
+conda activate dj-analyzer
 
 # Install dependencies
 pip install PyQt6 numpy scipy soundfile soxr mutagen pygame yt-dlp watchdog
@@ -138,7 +142,7 @@ build.bat
 # Output: dist\TrackFlow\TrackFlow.exe
 ```
 
-Requires PyInstaller (`pip install pyinstaller`) and the conda environment above.
+Requires PyInstaller (`pip install pyinstaller`) and the conda environment above. See `build.bat` for details.
 
 ---
 
@@ -149,18 +153,23 @@ Requires PyInstaller (`pip install pyinstaller`) and the conda environment above
 1. Click the **⬇ Downloads** tab at the top of the window
 2. Set your **Save to** folder (your DJ library folder, or a staging area)
 3. Paste a YouTube URL (video or playlist) into the URL bar and click **+ Add**
-4. Click **▶ Download All** — progress updates per row
+4. Click **▶ Download All** — progress updates per row; the format badge shows `MP3` or `M4A`
 5. When a row shows **✓ Done**, click **⬆ Import** to add it to the library and trigger analysis
+6. Use **⏹ Stop** to cancel all downloads at once, or **✕** on individual rows to remove them
 
-### Playlist Subscriptions (YouTube + Apple Music + Shazam)
+### Playlist Subscriptions
 
 1. Go to **⬇ Downloads → Subscriptions**
 2. **YouTube:** click **+ Add YouTube Playlist**, paste the playlist URL, give it a label
-3. **Apple Music / Shazam:**
+3. **Apple Music (URL):**
+   - Paste a public `music.apple.com` playlist URL into the **Apple Music URL** field and click **+ Subscribe**
+   - TrackFlow automatically fetches the track list from the Apple Music catalog API
+4. **Apple Music (iTunes XML / Shazam):**
    - Click **Detect** to auto-find your `iTunes Music Library.xml`, or browse manually
    - Click **+ Add Playlist** and type the playlist name exactly as it appears in Apple Music (e.g. `Shazam Library`)
-4. Click **🔄 Sync All Subscriptions Now** to run a manual check, or simply relaunch the app — sync runs automatically 2 seconds after startup
-5. New tracks appear in the Queue tab; click **Import Selected** to bring them into the library
+5. Click **🔄 Sync Now** to run a manual check, or simply relaunch the app — sync runs automatically 2 seconds after startup
+6. Use **🗑 Clear Cache** next to a subscription to re-sync all tracks (bypasses the already-seen filter)
+7. New tracks appear in the Queue tab; click **Import Selected** to bring them into the library
 
 ### SoulSeek Watcher
 
@@ -178,14 +187,18 @@ Requires PyInstaller (`pip install pyinstaller`) and the conda environment above
 TrackFlow/
 ├── main.py                    # Application entry point
 ├── paths.py                   # Path resolution (dev + frozen exe)
+├── build.bat                  # One-click Windows build script
+├── TrackFlow.spec             # PyInstaller spec (includes all Phase 2 modules)
 ├── analyzer/
 │   ├── audio_analyzer.py      # BPM / key / energy / MFCC / chroma engine
 │   ├── batch_analyzer.py      # Background batch analysis + JSON cache
 │   └── similarity.py          # 32-dim cosine similarity search
 ├── downloader/
-│   ├── yt_handler.py          # DownloadWorker(QThread) — yt-dlp wrapper
+│   ├── yt_handler.py          # DownloadWorker(QThread) — yt-dlp wrapper,
+│   │                          #   ffmpeg auto-detection, MP3/M4A format selection
 │   ├── watcher.py             # FolderWatcher(QObject) — watchdog wrapper
 │   └── playlist_sync.py       # YouTubePlaylistSource, AppleMusicSource,
+│                              #   AppleMusicURLSource (catalog API + JWT extraction),
 │                              #   PlaylistSyncWorker, search_youtube()
 ├── ui/
 │   ├── main_window.py         # Main window, Library tab, all DJ controls
@@ -207,7 +220,8 @@ TrackFlow/
     ├── test_analyzer_speed.py
     ├── test_batch_analyzer.py
     ├── test_similarity.py
-    └── test_downloads.py      # FolderWatcher, AppleMusicSource, sync state, etc.
+    └── test_downloads.py      # FolderWatcher, AppleMusicSource, AppleMusicURLSource,
+                               #   sync state, yt_handler imports
 ```
 
 ---
