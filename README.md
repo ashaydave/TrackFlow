@@ -5,9 +5,9 @@
 <h1 align="center">TrackFlow</h1>
 
 <p align="center">
-  A desktop DJ track analysis and preview tool built with PyQt6.
-  <br>
-  Analyze BPM, musical key, and energy levels across your music library — then preview, loop, cue, find similar tracks, and organize into playlists.
+  A desktop DJ track analysis, preview, and download tool built with PyQt6.<br>
+  Analyze BPM, key, and energy across your library — then preview, loop, cue, find similar tracks,<br>
+  organize playlists, and auto-download new music from YouTube, Apple Music, Shazam, and SoulSeek.
 </p>
 
 <p align="center">
@@ -20,57 +20,88 @@
 
 ## Features
 
-**Analysis Engine**
-- BPM detection via onset-based autocorrelation (first 60s for speed)
-- Musical key detection using chroma-based Krumhansl-Schmuckler algorithm with Camelot notation
+### 📊 Analysis Engine
+- BPM detection via onset-based autocorrelation (analyzes first 60s for speed)
+- Musical key detection using chroma-based Krumhansl–Schmuckler algorithm with Camelot and Open Key notation
 - Energy level scoring (1–10) from full-track RMS via chunked reads
 - Audio metadata extraction (format, bitrate, sample rate, duration, file size)
-- Batch analysis with thread pool and JSON cache
+- Batch analysis with background thread pool and JSON cache (skips already-analyzed tracks)
 
-**Track Similarity**
+### 🔍 Track Similarity
 - Find the 25 most similar tracks in your library to any loaded track
 - 32-dimensional feature vectors: 20 MFCC coefficients (timbre/texture) + 12 chroma means (pitch class)
-- Cosine similarity scoring — loudness-independent, 0–100% match score
-- Results shown in dedicated Similar tab with BPM, key, and match score
-- Requires tracks to be analyzed first; double-click any result to load it
+- Cosine similarity scoring — loudness-independent, shown as 0–100% match
+- Results in a dedicated Similar tab with BPM, key, and score; double-click to load
 
-**Waveform & Visualization**
-- Frequency-colored filled waveform (red = bass, amber = mid, cyan = high)
+### 🌊 Waveform & Visualization
+- Frequency-colored filled waveform: **red** = bass (0–200 Hz), **amber** = mids (200–4000 Hz), **cyan** = highs (4000+ Hz)
+- **Overview panel** (40px) — full-track minimap, click anywhere to seek
+- **Main panel** (120px) — auto-zooms to a ±15s window around the playhead for beat-level precision
 - Beat and bar grid overlay synced to detected BPM
-- Click or drag-to-seek on waveform (seeks on release, no audio artifacts)
-- Playhead tracking during playback
+- Hot cue tick marks and loop region overlay rendered on both panels
+- Click or drag-to-seek (seeks on mouse release, no audio artifacts)
 
-**DJ Controls**
-- 6 color-coded hot cues with persistence (keys 1–6, Shift+1–6 to clear)
-- **Seamless A–B looping** — loop region decoded into memory and played via `pygame.Sound(loops=-1)`, eliminating the pop/gap found in timer-based approaches
-- Bar-snap loop presets: ½, 1, 2, 4, 8 bars from nearest beat
-- Loop in/out controls (I / O keys) with visual overlay on waveform
-- Play/pause, seek forward/back via keyboard shortcuts
+### 🎛️ DJ Controls
+- **6 color-coded hot cues** with persistence across sessions (keys `1`–`6`, `Shift+1–6` to clear)
+- **Seamless A–B looping** — loop region decoded into RAM and played via `pygame.Sound(loops=-1)`, eliminating the pop/gap found in timer-based approaches
+- **Bar-snap loop presets**: ½, 1, 2, 4, 8 bars from nearest beat
+- Loop in/out controls (`I` / `O` keys) with live overlay on both waveform panels
+- Volume slider, play/pause, and keyboard-driven seeking
 
-**Library & Playlists**
-- Load individual tracks or entire folders
+### 📚 Library & Playlists
+- Load individual tracks or entire folders (recursive scan)
 - Sortable columns: track name, BPM, key (Camelot order), energy level
 - Low-bitrate flag on tracks below 320 kbps
 - Search/filter across library
-- Create, delete, and export playlists (copy to folder)
+- Create, delete, and export playlists (copy tracks to folder)
 - Multi-select drag-and-drop from library to playlist
-- Multi-delete from playlist
-- Click any track in library, playlist, or similarity results to load and preview
+- Multi-delete from playlist; sort playlist by BPM or key
 
-**Keyboard Shortcuts**
+### ⬇️ Downloads (Phase 2)
+
+#### YouTube
+- Paste any YouTube video or playlist URL into the **Queue** tab
+- Downloads best-quality audio (m4a) in the background — **no ffmpeg required**
+- Per-row progress indicator; Import button appears on completion
+- Bulk **Import Selected** adds finished tracks to the library and auto-triggers analysis
+
+#### Playlist Subscriptions
+Subscribe to YouTube playlists or Apple Music / Shazam playlists. On every app launch, TrackFlow checks for new additions and queues them automatically.
+
+| Source | How it works |
+|---|---|
+| **YouTube Playlist** | yt-dlp `extract_flat` fetches the playlist index; new video IDs are downloaded directly |
+| **Apple Music** | Parses the `iTunes Music Library.xml` written by Apple Music for Windows (zero extra deps — uses Python stdlib `plistlib`) |
+| **Shazam** | Shazam syncs to Apple Music — enable the Apple Music integration and add the "Shazam Library" playlist |
+
+For Apple Music and Shazam tracks, TrackFlow searches YouTube using three query variants (`Artist - Title`, `Title Artist`, `Artist Title official audio`) and downloads the best match. Tracks not found on YouTube are shown in a **Not Found** table for manual retry.
+
+Sync state is persisted in `data/sync_state.json` — already-downloaded tracks are never re-queued.
+
+#### SoulSeek Watcher
+- Point TrackFlow at your SoulSeek "completed downloads" folder
+- `watchdog` monitors the folder in real time (catches both new file creation and SoulSeek's `.tmp` → final filename rename-on-completion)
+- Each detected audio file appears in the watcher table with an **Import** button
+
+---
+
+## Keyboard Shortcuts
+
 | Key | Action |
 |-----|--------|
 | `Space` | Play / Pause |
 | `←` / `→` | Seek ±5 seconds |
 | `Shift+←` / `→` | Seek ±30 seconds |
-| `I` | Set loop in-point |
-| `O` | Set loop out-point / stop loop (press again to stop) |
+| `I` | Set loop in-point (A) |
+| `O` | Set loop out-point (B) |
 | `L` | Toggle loop on / off |
 | `1`–`6` | Jump to hot cue (sets if empty) |
 | `Shift+1`–`6` | Clear hot cue |
 | `Enter` | Play selected track (library or playlist) |
 | `Delete` | Remove selected track(s) from playlist |
 | `F1` / `?` | Open help |
+
+---
 
 ## Getting Started
 
@@ -91,7 +122,7 @@ conda create -n trackflow python=3.11 -y
 conda activate trackflow
 
 # Install dependencies
-pip install PyQt6 numpy scipy soundfile soxr mutagen pygame
+pip install PyQt6 numpy scipy soundfile soxr mutagen pygame yt-dlp watchdog
 ```
 
 ### Run
@@ -107,39 +138,83 @@ build.bat
 # Output: dist\TrackFlow\TrackFlow.exe
 ```
 
-Requires PyInstaller (`pip install pyinstaller`) and the `dj-analyzer` conda environment.
+Requires PyInstaller (`pip install pyinstaller`) and the conda environment above.
+
+---
+
+## Using the Downloads Tab
+
+### YouTube — single track or playlist
+
+1. Click the **⬇ Downloads** tab at the top of the window
+2. Set your **Save to** folder (your DJ library folder, or a staging area)
+3. Paste a YouTube URL (video or playlist) into the URL bar and click **+ Add**
+4. Click **▶ Download All** — progress updates per row
+5. When a row shows **✓ Done**, click **⬆ Import** to add it to the library and trigger analysis
+
+### Playlist Subscriptions (YouTube + Apple Music + Shazam)
+
+1. Go to **⬇ Downloads → Subscriptions**
+2. **YouTube:** click **+ Add YouTube Playlist**, paste the playlist URL, give it a label
+3. **Apple Music / Shazam:**
+   - Click **Detect** to auto-find your `iTunes Music Library.xml`, or browse manually
+   - Click **+ Add Playlist** and type the playlist name exactly as it appears in Apple Music (e.g. `Shazam Library`)
+4. Click **🔄 Sync All Subscriptions Now** to run a manual check, or simply relaunch the app — sync runs automatically 2 seconds after startup
+5. New tracks appear in the Queue tab; click **Import Selected** to bring them into the library
+
+### SoulSeek Watcher
+
+1. Go to **⬇ Downloads → SoulSeek Watcher**
+2. Click **Browse** and navigate to your SoulSeek "Finished Downloads" folder
+3. Click **▶ Start Watching** — the status indicator turns green
+4. As SoulSeek completes downloads, files appear in the table automatically
+5. Click **⬆ Import** on any row (or **Import All New**) to add files to the library
+
+---
 
 ## Project Structure
 
 ```
 TrackFlow/
-├── main.py                  # Application entry point
-├── paths.py                 # Centralized path resolution (dev + frozen exe)
+├── main.py                    # Application entry point
+├── paths.py                   # Path resolution (dev + frozen exe)
 ├── analyzer/
-│   ├── audio_analyzer.py    # Core BPM/key/energy/MFCC/chroma analysis engine
-│   ├── batch_analyzer.py    # Thread pool batch analysis + JSON cache
-│   └── similarity.py        # 32-dim cosine similarity search
+│   ├── audio_analyzer.py      # BPM / key / energy / MFCC / chroma engine
+│   ├── batch_analyzer.py      # Background batch analysis + JSON cache
+│   └── similarity.py          # 32-dim cosine similarity search
+├── downloader/
+│   ├── yt_handler.py          # DownloadWorker(QThread) — yt-dlp wrapper
+│   ├── watcher.py             # FolderWatcher(QObject) — watchdog wrapper
+│   └── playlist_sync.py       # YouTubePlaylistSource, AppleMusicSource,
+│                              #   PlaylistSyncWorker, search_youtube()
 ├── ui/
-│   ├── main_window.py       # Main application window and all UI logic
-│   ├── waveform_dj.py       # Frequency-colored waveform widget
-│   ├── audio_player.py      # Pygame-based audio player (STOPPED/PLAYING/PAUSED/LOOP_PLAYING)
-│   └── styles.py            # Centralized cyberpunk QSS stylesheet
+│   ├── main_window.py         # Main window, Library tab, all DJ controls
+│   ├── downloads_tab.py       # Downloads tab (Queue / Subscriptions / SoulSeek)
+│   ├── waveform_dj.py         # Frequency-colored waveform widget
+│   ├── audio_player.py        # Pygame player (STOPPED/PLAYING/PAUSED/LOOP_PLAYING)
+│   └── styles.py              # Centralized cyberpunk QSS stylesheet
 ├── assets/
-│   ├── logo.svg             # Application logo (vector)
-│   ├── logo_32.png          # Toolbar icon
-│   └── logo_256.png         # Window icon
+│   ├── logo.svg               # Application logo (vector)
+│   ├── logo_32.png            # Toolbar icon
+│   └── logo_256.png           # Window / tray icon
 ├── data/
-│   ├── cache/               # Analysis results cache (JSON, keyed by path+mtime+size)
-│   └── hot_cues.json        # Saved hot cue positions
+│   ├── cache/                 # Analysis cache (JSON, keyed by path+mtime+size)
+│   ├── hot_cues.json          # Saved hot cue positions per track
+│   ├── playlists.json         # Saved playlists
+│   ├── sync_state.json        # Last-known playlist state (prevents re-downloads)
+│   └── downloads_config.json  # Output folder, watch dir, subscriptions
 └── tests/
     ├── test_analyzer_speed.py
     ├── test_batch_analyzer.py
-    └── test_similarity.py
+    ├── test_similarity.py
+    └── test_downloads.py      # FolderWatcher, AppleMusicSource, sync state, etc.
 ```
+
+---
 
 ## Built With
 
-This project was built entirely with [Claude](https://claude.ai) by Anthropic — from the analysis engine and UI layout to the waveform rendering, seamless looping, and similarity search.
+This project was built entirely with [Claude](https://claude.ai) by Anthropic — from the analysis engine and UI layout to the waveform rendering, seamless looping, similarity search, and the full playlist-sync and download pipeline.
 
 ## License
 
