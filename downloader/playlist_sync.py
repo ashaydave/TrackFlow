@@ -296,44 +296,108 @@ class AppleMusicURLSource:
     @classmethod
     def _get_apple_token(cls) -> str | None:
         """
-        Fetch the Apple Music home page and extract the embedded bearer token.
-        The token is stored in a <meta name="desktop-music-app/config/amp-authorization">
-        tag and is valid for several hours.  Result is cached at class level.
+        Extract the Apple Music developer bearer token (JWT) needed to call
+        the catalog API.  Apple embeds this token in their main web-player JS
+        bundle rather than in the HTML page itself.
+
+        Strategy
+        --------
+        1. Fetch https://music.apple.com/ to get the list of <script src=...> files.
+        2. Check the page HTML for the token in a <meta> tag or inline script
+           (older deployments sometimes had it there).
+        3. Fetch the main app bundle (the "index~*.js" file, skipping legacy /
+           polyfill variants) and extract the JWT from its source.
+
+        The token is a long-lived JWT (valid for ~6 months) and is cached at
+        class level so we only pay the one-time JS-bundle fetch cost once per
+        session.
         """
+        import gzip
         import re
         import urllib.request
 
         if cls._cached_token:
             return cls._cached_token
 
-        try:
-            req = urllib.request.Request(
-                "https://music.apple.com/",
-                headers={"User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                )},
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                page = resp.read().decode("utf-8", errors="replace")
-        except Exception:
+        ua = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        )
+        hdrs = {
+            "User-Agent": ua,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+        # JWT pattern: three base64url segments, middle segment long enough to be a real payload
+        JWT_RE = re.compile(
+            r'["\']?(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{40,}\.[A-Za-z0-9_-]{10,})["\']?'
+        )
+
+        def _find_jwt(text: str) -> str | None:
+            # Named patterns first (most precise)
+            for pat in [
+                r'<meta[^>]*name="desktop-music-app/config/amp-authorization"[^>]*content="([^"]+)"',
+                r'<meta[^>]*content="([^"]+)"[^>]*name="desktop-music-app/config/amp-authorization"',
+                r'developerToken["\s]*:["\s]*["\']([^"\']{50,})["\']',
+            ]:
+                m = re.search(pat, text, re.IGNORECASE)
+                if m:
+                    tok = m.group(1).strip()
+                    if tok.count(".") == 2 and tok.startswith("eyJ"):
+                        return tok
+            # Broad JWT scan
+            for m in JWT_RE.finditer(text):
+                tok = m.group(1)
+                if tok.count(".") == 2:
+                    return tok
             return None
 
-        # Primary: dedicated meta tag
-        for pat in [
-            r'name="desktop-music-app/config/amp-authorization"\s+content="([^"]+)"',
-            r'content="([^"]+)"\s+name="desktop-music-app/config/amp-authorization"',
-        ]:
-            m = re.search(pat, page)
-            if m:
-                cls._cached_token = m.group(1)
-                return cls._cached_token
+        def _fetch_text(url: str, timeout: int = 30) -> str | None:
+            try:
+                req = urllib.request.Request(url, headers=hdrs)
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    raw = resp.read()
+                try:
+                    return gzip.decompress(raw).decode("utf-8", errors="replace")
+                except Exception:
+                    return raw.decode("utf-8", errors="replace")
+            except Exception:
+                return None
 
-        # Fallback: JWT pattern (eyJ…) anywhere in page scripts
-        m = re.search(r'"(eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,})"', page)
-        if m:
-            cls._cached_token = m.group(1)
-            return cls._cached_token
+        # --- Step 1: Fetch Apple Music homepage ---
+        page = _fetch_text("https://music.apple.com/", timeout=15)
+        if not page:
+            return None
+
+        # --- Step 2: Check page HTML itself (older Apple Music versions) ---
+        tok = _find_jwt(page)
+        if tok:
+            cls._cached_token = tok
+            return tok
+
+        # --- Step 3: Find and fetch the main JS bundle ---
+        # The page lists <script src="/assets/index~HASH.js"> for the main bundle.
+        # Skip "legacy" and "polyfills" variants — the main bundle has the token.
+        js_srcs = re.findall(r'<script[^>]+src=["\']([^"\']+\.js[^"\']*)["\']', page)
+        ordered: list[tuple[int, str]] = []
+        for src in js_srcs:
+            if src.startswith("/"):
+                src = "https://music.apple.com" + src
+            base = src.split("/")[-1].split("?")[0].lower()
+            if "legacy" in base or "polyfill" in base:
+                continue
+            priority = 0 if base.startswith("index") else 1
+            ordered.append((priority, src))
+        ordered.sort()
+
+        for _, js_url in ordered[:5]:
+            content = _fetch_text(js_url, timeout=30)
+            if content:
+                tok = _find_jwt(content)
+                if tok:
+                    cls._cached_token = tok
+                    return tok
 
         return None
 
@@ -345,6 +409,7 @@ class AppleMusicURLSource:
         """
         Fetch the public playlist page and look for track data in:
           - JSON-LD <script type="application/ld+json"> (MusicPlaylist schema)
+          - Apple Music "serialized-server-data" script tag
           - Next.js __NEXT_DATA__ hydration blob
         Returns None if the fetch itself fails, [] if found but no tracks.
         """
@@ -355,7 +420,7 @@ class AppleMusicURLSource:
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
             ),
             "Accept-Language": "en-US,en;q=0.9",
         }
@@ -379,6 +444,17 @@ class AppleMusicURLSource:
                         return self._parse_ld(data)
                 except Exception:
                     continue
+
+            # Apple Music "serialized-server-data" (present in all modern AM pages)
+            m = re.search(r'<script[^>]+id="serialized-server-data"[^>]*>(.*?)</script>',
+                          page, re.DOTALL)
+            if m:
+                try:
+                    result = self._extract_tracks_from_json(json.loads(m.group(1)))
+                    if result:
+                        return result
+                except Exception:
+                    pass
 
             # Next.js __NEXT_DATA__
             m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', page, re.DOTALL)
