@@ -162,14 +162,14 @@ def test_genre_cache_key_changes_on_file_modification(tmp_path):
 # GenreDetector.available()
 # ---------------------------------------------------------------------------
 
-def test_available_returns_false_when_essentia_missing():
-    """available() should return False if essentia is not installed."""
+def test_available_returns_false_when_onnxruntime_missing():
+    """available() should return False if onnxruntime is not installed."""
     import builtins
     real_import = builtins.__import__
 
     def mock_import(name, *args, **kwargs):
-        if name == "essentia":
-            raise ImportError("No module named 'essentia'")
+        if name == "onnxruntime":
+            raise ImportError("No module named 'onnxruntime'")
         return real_import(name, *args, **kwargs)
 
     from analyzer.genre_detector import GenreDetector
@@ -179,12 +179,12 @@ def test_available_returns_false_when_essentia_missing():
     assert result is False
 
 
-def test_available_returns_true_when_essentia_present():
-    """available() returns True when essentia imports successfully."""
+def test_available_returns_true_when_onnxruntime_present():
+    """available() returns True when onnxruntime imports successfully."""
     from analyzer.genre_detector import GenreDetector
 
-    mock_essentia = MagicMock()
-    with patch.dict("sys.modules", {"essentia": mock_essentia}):
+    mock_ort = MagicMock()
+    with patch.dict("sys.modules", {"onnxruntime": mock_ort}):
         result = GenreDetector.available()
 
     assert result is True
@@ -268,23 +268,23 @@ def test_label_cleaning_logic():
 # ---------------------------------------------------------------------------
 
 def test_models_manifest_has_required_keys():
-    """MODELS dict has the three required keys with expected fields."""
+    """MODELS dict has the two required keys (ONNX build) with expected fields."""
     from analyzer.genre_detector import MODELS
 
-    assert set(MODELS.keys()) == {"effnet", "genre_head", "labels"}
+    assert set(MODELS.keys()) == {"effnet", "labels"}
     for key, info in MODELS.items():
         assert "url" in info, f"Missing 'url' in MODELS['{key}']"
         assert "filename" in info, f"Missing 'filename' in MODELS['{key}']"
         assert info["url"].startswith("https://"), f"URL should be HTTPS: {info['url']}"
-        assert info["filename"].endswith((".pb", ".json")), (
+        assert info["filename"].endswith((".onnx", ".json")), (
             f"Unexpected file extension: {info['filename']}"
         )
 
 
 def test_models_effnet_is_largest():
-    """The EffNet backbone should be the largest model (~40 MB)."""
+    """The EffNet ONNX model should be the larger file (~37 MB)."""
     from analyzer.genre_detector import MODELS
 
     effnet_size = MODELS["effnet"]["size_mb"]
-    assert effnet_size >= 30, f"EffNet expected ~40 MB, got {effnet_size}"
-    assert effnet_size > MODELS["genre_head"]["size_mb"]
+    assert effnet_size >= 30, f"EffNet ONNX expected ~37 MB, got {effnet_size}"
+    assert effnet_size > MODELS["labels"]["size_mb"]

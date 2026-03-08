@@ -55,9 +55,9 @@ a = Analysis(
         'watchdog.events',
         'watchdog.utils',
         'watchdog.utils.dirsnapshot',
-        # essentia-tensorflow (genre detection — optional, graceful if absent)
-        'essentia',
-        'essentia.standard',
+        # onnxruntime (genre detection — optional, graceful if absent)
+        'onnxruntime',
+        'onnxruntime.capi',
     ],
     hookspath=[],
     hooksconfig={},

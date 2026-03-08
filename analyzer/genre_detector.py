@@ -1,17 +1,23 @@
 # analyzer/genre_detector.py
 """
-Genre detection using Essentia + Discogs-EffNet (400 Discogs music styles).
+Genre detection using ONNX Runtime + Discogs-EffNet (400 Discogs music styles).
 
-Models are downloaded on first use from the Essentia model server (~42 MB total):
-  - discogs-effnet-bs64-2.pb           (EffNet feature extractor, ~40 MB)
-  - genre_discogs400-discogs-effnet-1.pb  (genre classification head, ~1 MB)
-  - genre_discogs400-discogs-effnet-1.json  (class labels)
+Uses the official Essentia ONNX export of the Discogs-EffNet model, which runs
+via onnxruntime — works on Windows, macOS and Linux with no extra dependencies.
 
-Gracefully disabled if essentia-tensorflow is not installed — GenreDetector.available()
-returns False and GenreWorker skips genre analysis without crashing the app.
+Two files are downloaded on first use (~37 MB total):
+  discogs-effnet-bsdynamic-1.onnx  — full EffNet model (backbone + genre head)
+  genre_discogs400-discogs-effnet-1.json  — class labels
 
-Discogs labels are formatted as "Electronic---Deep House"; this module strips the
-top-level category so the UI shows "Deep House" instead of the raw label.
+Audio preprocessing replicates Essentia's TensorflowPredictEffnetDiscogs:
+  - 16 kHz mono
+  - 128-band mel spectrogram (HTK scale, 512-sample window, 256-sample hop)
+  - Power-to-dB log compression
+  - Non-overlapping 96-frame patches  → model input [n, 128, 96]
+  - Per-patch standardization (µ=0, σ=1)
+
+Discogs labels are formatted "Electronic---Deep House"; this module strips
+the top-level category so the UI shows "Deep House" instead.
 """
 
 import hashlib
@@ -19,29 +25,25 @@ import json
 import urllib.request
 from pathlib import Path
 
+import numpy as np
+from scipy.fft import rfft
+from scipy.signal import get_window
+
 from paths import get_cache_dir, get_models_dir
 
 
 # ---------------------------------------------------------------------------
-# Model manifest
+# Model manifest — ONNX build, Windows-compatible via onnxruntime
 # ---------------------------------------------------------------------------
 
 MODELS = {
     "effnet": {
         "url": (
             "https://essentia.upf.edu/models/feature-extractors/"
-            "discogs-effnet/discogs-effnet-bs64-2.pb"
+            "discogs-effnet/discogs-effnet-bsdynamic-1.onnx"
         ),
-        "filename": "discogs-effnet-bs64-2.pb",
-        "size_mb": 40,
-    },
-    "genre_head": {
-        "url": (
-            "https://essentia.upf.edu/models/classification-heads/"
-            "genre_discogs400/genre_discogs400-discogs-effnet-1.pb"
-        ),
-        "filename": "genre_discogs400-discogs-effnet-1.pb",
-        "size_mb": 1,
+        "filename": "discogs-effnet-bsdynamic-1.onnx",
+        "size_mb": 37,
     },
     "labels": {
         "url": (
@@ -53,6 +55,98 @@ MODELS = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Mel spectrogram constants  (match Essentia's EffNet preprocessing)
+# ---------------------------------------------------------------------------
+
+_SR     = 16_000   # sample rate (Hz)
+_N_FFT  = 512      # FFT window (32 ms at 16 kHz)
+_HOP    = 256      # hop size   (16 ms at 16 kHz)
+_N_MELS = 128      # mel bands
+_FMIN   = 0.0
+_FMAX   = 8_000.0  # Nyquist for 16 kHz
+_PATCH  = 96       # time-frames per patch → [n, 128, 96] model input
+
+# Built once on first call
+_MEL_FB: np.ndarray | None = None
+_WINDOW: np.ndarray | None = None
+
+
+def _build_mel_fb() -> np.ndarray:
+    """HTK mel filterbank — [n_mels, n_bins] float32."""
+    def hz2mel(h):
+        return 2595.0 * np.log10(1.0 + h / 700.0)
+    def mel2hz(m):
+        return 700.0 * (10.0 ** (m / 2595.0) - 1.0)
+
+    freqs = np.fft.rfftfreq(_N_FFT, d=1.0 / _SR).astype(np.float64)
+    mel_pts = np.linspace(hz2mel(_FMIN), hz2mel(_FMAX), _N_MELS + 2)
+    hz_pts  = mel2hz(mel_pts)
+    fb = np.zeros((_N_MELS, len(freqs)), dtype=np.float32)
+    for i in range(_N_MELS):
+        lo, mid, hi = hz_pts[i], hz_pts[i + 1], hz_pts[i + 2]
+        rise = (freqs - lo)  / (mid - lo  + 1e-8)
+        fall = (hi - freqs)  / (hi  - mid + 1e-8)
+        fb[i] = np.clip(np.minimum(rise, fall), 0.0, 1.0).astype(np.float32)
+    return fb
+
+
+def _mel_patches(audio: np.ndarray) -> np.ndarray:
+    """
+    Convert 16 kHz mono audio to non-overlapping mel spectrogram patches.
+
+    Returns float32 array of shape [n_patches, 128, 96].
+    Standardises each patch to µ=0, σ=1 (Essentia EffNet convention).
+    """
+    global _MEL_FB, _WINDOW
+    if _MEL_FB is None:
+        _MEL_FB = _build_mel_fb()
+    if _WINDOW is None:
+        _WINDOW = get_window("hann", _N_FFT).astype(np.float32)
+
+    audio = audio.astype(np.float32)
+
+    # Pad so we get at least one full patch
+    min_len = _PATCH * _HOP + _N_FFT
+    if len(audio) < min_len:
+        audio = np.pad(audio, (0, min_len - len(audio)))
+
+    # Strided frame extraction (no Python loop) — same pattern as audio_analyzer.py
+    y_pad = np.pad(audio, _N_FFT // 2)
+    n_frames = 1 + (len(y_pad) - _N_FFT) // _HOP
+    strides = (y_pad.strides[0], y_pad.strides[0] * _HOP)
+    framed = np.lib.stride_tricks.as_strided(
+        y_pad, shape=(_N_FFT, n_frames), strides=strides
+    ).copy()  # [n_fft, n_frames]
+
+    # Power spectrum: [n_bins, n_frames]
+    S = np.abs(rfft(framed * _WINDOW.reshape(-1, 1), axis=0)) ** 2
+
+    # Mel spectrogram: [128, n_frames]
+    mel = _MEL_FB @ S
+
+    # Power to dB
+    mel_db = 10.0 * np.log10(np.maximum(mel, 1e-7))  # [128, n_frames]
+
+    # Extract non-overlapping patches
+    n_patches = n_frames // _PATCH
+    if n_patches == 0:
+        # Pad to one full patch
+        pad_cols = _PATCH - mel_db.shape[1]
+        mel_db = np.pad(mel_db, ((0, 0), (0, pad_cols)))
+        n_patches = 1
+
+    mel_trim = mel_db[:, : n_patches * _PATCH]                  # [128, n*96]
+    patches = mel_trim.reshape(_N_MELS, n_patches, _PATCH)      # [128, n, 96]
+    patches = patches.transpose(1, 0, 2)                        # [n, 128, 96]
+
+    # Per-patch standardisation (subtract mean, divide by std)
+    mu    = patches.mean(axis=(1, 2), keepdims=True)
+    sigma = patches.std(axis=(1, 2), keepdims=True) + 1e-8
+    patches = (patches - mu) / sigma
+
+    return patches.astype(np.float32)
+
 
 # ---------------------------------------------------------------------------
 # Model download helper
@@ -60,7 +154,7 @@ MODELS = {
 
 def ensure_models(status_callback=None) -> dict | None:
     """
-    Download genre models to data/models/ if not already present.
+    Download ONNX model + labels JSON if not already on disk.
 
     Returns a dict mapping key → local Path on success, or None on failure.
     status_callback(msg: str) is called with progress messages if provided.
@@ -87,7 +181,6 @@ def ensure_models(status_callback=None) -> dict | None:
             err = f"Genre model download failed ({info['filename']}): {exc}"
             if status_callback:
                 status_callback(err)
-            # Clean up partial download
             dest.unlink(missing_ok=True)
             return None
 
@@ -95,7 +188,7 @@ def ensure_models(status_callback=None) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# Genre cache (per-track, same scheme as batch_analyzer)
+# Genre cache  (per-track, same scheme as batch_analyzer)
 # ---------------------------------------------------------------------------
 
 def _genre_cache_key(file_path: Path) -> str:
@@ -130,72 +223,98 @@ def save_genre_cache(file_path: Path, genres_str: str) -> None:
 
 class GenreDetector:
     """
-    Wraps Essentia's Discogs-EffNet pipeline.
+    Wraps the Discogs-EffNet ONNX model for music genre classification.
+
+    Produces the same 400 Discogs music-style labels as the Essentia
+    TF version, with no platform dependency beyond onnxruntime + numpy.
 
     Usage::
 
         model_paths = ensure_models()
         if model_paths:
-            detector = GenreDetector(model_paths)
-            genres = detector.detect("/path/to/track.mp3")
-            print(detector.format_genres(genres))   # "Deep House / Tech House"
+            d = GenreDetector(model_paths)
+            genres = d.detect("/path/to/track.mp3")
+            print(d.format_genres(genres))   # "Deep House / Tech House"
 
-    Requires: pip install essentia-tensorflow
+    Requires: pip install onnxruntime
     """
 
     @staticmethod
     def available() -> bool:
-        """Return True if essentia-tensorflow is importable."""
+        """Return True if onnxruntime is importable."""
         try:
-            import essentia  # noqa: F401
+            import onnxruntime  # noqa: F401
             return True
         except ImportError:
             return False
 
     def __init__(self, model_paths: dict):
         """
-        Initialise. Loads both TensorFlow graphs into memory.
+        Load the ONNX session and label list.
         model_paths is the dict returned by ensure_models().
         """
-        import essentia.standard as es
-        import numpy as np
+        import onnxruntime as ort
 
-        self._es = es
-        self._np = np
+        opts = ort.SessionOptions()
+        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = 2
+        opts.log_severity_level = 3   # suppress onnxruntime INFO spam
 
-        self._effnet = es.TensorflowPredictEffnetDiscogs(
-            graphFilename=str(model_paths["effnet"]),
-            output="PartitionedCall:1",
-        )
-        self._genre_model = es.TensorflowPredict2D(
-            graphFilename=str(model_paths["genre_head"]),
-            input="serving_default_model_Placeholder",
-            output="PartitionedCall:0",
+        self._session = ort.InferenceSession(
+            str(model_paths["effnet"]),
+            sess_options=opts,
+            providers=["CPUExecutionProvider"],
         )
 
-        # Clean labels: "Electronic---Deep House" → "Deep House"
+        # Discover input name at runtime (ONNX export may rename nodes)
+        self._input_name = self._session.get_inputs()[0].name
+
+        # Pick the output with shape [..., 400] = genre predictions
+        # (the model also has an embeddings output of shape [..., 1280])
+        self._pred_name = self._session.get_outputs()[0].name
+        for out in self._session.get_outputs():
+            shape = getattr(out, "shape", None)
+            if shape and len(shape) >= 2 and shape[-1] == 400:
+                self._pred_name = out.name
+                break
+
+        # Load and clean labels: "Electronic---Deep House" → "Deep House"
         with open(model_paths["labels"]) as f:
             meta = json.load(f)
+        raw_labels: list[str] = meta.get("classes", [])
         self._labels: list[str] = [
-            lbl.split("---")[-1].strip()
-            for lbl in meta.get("classes", [])
+            lbl.split("---")[-1].strip() for lbl in raw_labels
         ]
 
     def detect(self, file_path: str, top_n: int = 3) -> list[tuple[str, float]]:
         """
         Run genre inference on an audio file.
 
-        Loads the audio at 16 kHz mono (required by EffNet), computes embeddings,
-        averages frame-level predictions, and returns the top_n genres.
-
-        Returns list of (genre_label, score) sorted by score descending.
-        Raises Exception on audio load or inference failure (caller should catch).
+        Loads up to 30 seconds of audio at 16 kHz, computes mel patches,
+        runs the ONNX EffNet model, and returns top_n (genre, score) pairs.
+        Raises Exception on failure — caller should catch.
         """
-        np = self._np
-        audio = self._es.MonoLoader(filename=str(file_path), sampleRate=16000)()
-        embeddings = self._effnet(audio)
-        preds = self._genre_model(embeddings)
-        avg = np.mean(preds, axis=0)
+        import soundfile as sf
+        import soxr
+
+        info = sf.info(str(file_path))
+        max_frames = min(info.frames, 30 * info.samplerate)
+        audio, _ = sf.read(
+            str(file_path), frames=max_frames, dtype="float32", always_2d=False
+        )
+        if audio.ndim == 2:
+            audio = audio.mean(axis=1)
+        if info.samplerate != _SR:
+            audio = soxr.resample(audio, info.samplerate, _SR, quality="HQ")
+
+        patches = _mel_patches(audio)   # [n, 128, 96]
+
+        preds = self._session.run(
+            [self._pred_name],
+            {self._input_name: patches},
+        )[0]  # [n, 400]
+
+        avg = np.mean(preds, axis=0)    # [400]
         top_idx = np.argsort(avg)[::-1][:top_n]
         return [
             (self._labels[i], float(avg[i]))
@@ -210,10 +329,9 @@ class GenreDetector:
         max_display: int = 2,
     ) -> str:
         """
-        Convert genre list to display string.
+        Convert genre list to a display string.
 
-        e.g. [("Deep House", 0.42), ("Tech House", 0.18), ("House", 0.07)]
-             → "Deep House / Tech House"
+        e.g. [("Deep House", 0.42), ("Tech House", 0.18)] → "Deep House / Tech House"
 
         Genres below min_score are filtered out.
         """
