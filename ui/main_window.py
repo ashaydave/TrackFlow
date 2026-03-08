@@ -630,12 +630,12 @@ class MainWindow(QMainWindow):
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)   # Genre
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)   # ✓
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)  # Genre — user can drag wider
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)        # ✓
         self.track_table.setColumnWidth(1, 58)
         self.track_table.setColumnWidth(2, 64)
         self.track_table.setColumnWidth(3, 42)
-        self.track_table.setColumnWidth(4, 120)  # Genre
+        self.track_table.setColumnWidth(4, 150)  # Genre — wider default, draggable
         self.track_table.setColumnWidth(5, 22)   # ✓
 
         self.track_table.verticalHeader().setDefaultSectionSize(22)
