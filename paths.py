@@ -29,6 +29,13 @@ def get_cache_dir() -> Path:
     return d
 
 
+def get_models_dir() -> Path:
+    """Local directory for downloaded ML models (genre, etc.)."""
+    d = get_data_dir() / "models"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def get_assets_dir() -> Path:
     if _is_frozen():
         return Path(sys._MEIPASS) / "assets"      # type: ignore[attr-defined]

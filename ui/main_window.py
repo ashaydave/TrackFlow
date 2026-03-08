@@ -22,6 +22,9 @@ from PyQt6.QtGui import QColor, QAction, QKeyEvent, QShortcut, QKeySequence, QIc
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from analyzer.audio_analyzer import AudioAnalyzer
 from analyzer.batch_analyzer import BatchAnalyzer, is_cached, load_cached
+from analyzer.genre_detector import (
+    GenreDetector, ensure_models, load_genre_cache, save_genre_cache,
+)
 from ui.waveform_dj import WaveformDJ
 from ui.audio_player import AudioPlayer, PlayerState
 from ui.styles import STYLESHEET
@@ -328,6 +331,76 @@ class BatchThread(QThread):
         self._batch.cancel()
 
 
+class GenreWorker(QThread):
+    """
+    Background thread that runs Essentia Discogs-EffNet genre detection.
+
+    Works through the library file-by-file (sequential — TF session is not
+    thread-safe), emitting genre_done for each track.  Results are cached so
+    subsequent analysis runs are near-instant.
+
+    Skipped silently if essentia-tensorflow is not installed or if the model
+    download fails.
+    """
+
+    genre_done = pyqtSignal(str, str)   # file_path, genres_str
+    status_msg = pyqtSignal(str)        # status bar message
+    all_done   = pyqtSignal()
+
+    def __init__(self, file_paths: list[str]):
+        super().__init__()
+        self._paths = file_paths
+
+    def run(self) -> None:
+        from pathlib import Path as _Path
+        from analyzer.genre_detector import (
+            GenreDetector, ensure_models,
+            load_genre_cache, save_genre_cache,
+        )
+
+        # 1. Download models if needed (blocking, but in background thread)
+        self.status_msg.emit("Genre detection: checking models…")
+        model_paths = ensure_models(status_callback=lambda m: self.status_msg.emit(m))
+        if model_paths is None:
+            self.status_msg.emit("Genre detection skipped — model download failed")
+            self.all_done.emit()
+            return
+
+        # 2. Initialise detector (loads TF graphs into memory)
+        try:
+            detector = GenreDetector(model_paths)
+        except Exception as exc:
+            self.status_msg.emit(f"Genre detection skipped — init error: {exc}")
+            self.all_done.emit()
+            return
+
+        # 3. Process each file
+        total = len(self._paths)
+        for idx, fp in enumerate(self._paths, 1):
+            p = _Path(fp)
+            if not p.exists():
+                continue
+
+            # Cache hit?
+            cached = load_genre_cache(p)
+            if cached is not None:
+                self.genre_done.emit(fp, cached)
+                continue
+
+            self.status_msg.emit(f"Genre detection {idx}/{total}: {p.name}…")
+            try:
+                genres = detector.detect(fp)
+                genres_str = detector.format_genres(genres)
+                save_genre_cache(p, genres_str)
+                self.genre_done.emit(fp, genres_str)
+            except Exception as exc:
+                print(f"GenreWorker error ({p.name}): {exc}")
+                # Emit empty string so UI doesn't hang; don't cache failures
+                self.genre_done.emit(fp, "")
+
+        self.all_done.emit()
+
+
 # ---------------------------------------------------------------------------
 # Main Window
 # ---------------------------------------------------------------------------
@@ -349,6 +422,7 @@ class MainWindow(QMainWindow):
         self.library_files: list = []
         self.analysis_thread: AnalysisThread | None = None
         self.batch_thread: BatchThread | None = None
+        self._genre_worker: GenreWorker | None = None
         self._row_map: dict = {}   # file_path (str) -> table row index (int)
         self._seek_dragging = False
         self._playlists: list = []   # list of {"name": str, "tracks": [str]}
@@ -539,8 +613,10 @@ class MainWindow(QMainWindow):
         lay.addWidget(header)
 
         self.track_table = DraggableLibraryTable()
-        self.track_table.setColumnCount(5)
-        self.track_table.setHorizontalHeaderLabels(["Track", "BPM", "Key", "Nrg", "\u2713"])
+        self.track_table.setColumnCount(6)
+        self.track_table.setHorizontalHeaderLabels(
+            ["Track", "BPM", "Key", "Nrg", "Genre", "\u2713"]
+        )
         self.track_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.track_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.track_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -554,11 +630,13 @@ class MainWindow(QMainWindow):
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)   # Genre
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)   # ✓
         self.track_table.setColumnWidth(1, 58)
         self.track_table.setColumnWidth(2, 64)
         self.track_table.setColumnWidth(3, 42)
-        self.track_table.setColumnWidth(4, 22)
+        self.track_table.setColumnWidth(4, 120)  # Genre
+        self.track_table.setColumnWidth(5, 22)   # ✓
 
         self.track_table.verticalHeader().setDefaultSectionSize(22)
 
@@ -1299,7 +1377,8 @@ class MainWindow(QMainWindow):
         self.track_table.setItem(row, 1, QTableWidgetItem("--"))
         self.track_table.setItem(row, 2, QTableWidgetItem("--"))
         self.track_table.setItem(row, 3, QTableWidgetItem("--"))   # Energy
-        self.track_table.setItem(row, 4, QTableWidgetItem("\u00b7"))  # · (pending)
+        self.track_table.setItem(row, 4, QTableWidgetItem(""))     # Genre (filled later)
+        self.track_table.setItem(row, 5, QTableWidgetItem("\u00b7"))  # · (pending ✓)
 
     # ------------------------------------------------------------------
     # Track selection & analysis
@@ -1385,8 +1464,8 @@ class MainWindow(QMainWindow):
         nrg_item.setData(Qt.ItemDataRole.UserRole, int(energy_level) if energy_level else 0)
         self.track_table.setItem(row, 3, nrg_item)
 
-        # Status ✓
-        self.track_table.setItem(row, 4, QTableWidgetItem("\u2713"))
+        # Status ✓ — now in col 5 (col 4 reserved for Genre)
+        self.track_table.setItem(row, 5, QTableWidgetItem("\u2713"))
 
         # Low-bitrate flag: mark tracks below 320 kbps in orange
         ai = results.get('audio_info', {})
@@ -1505,6 +1584,26 @@ class MainWindow(QMainWindow):
         self._status.showMessage(
             f"Done \u2014 {analyzed} analyzed, {cached} from cache, {analyzed + cached} total"
         )
+        # Kick off genre detection in background (gracefully skipped if essentia absent)
+        if self.library_files and GenreDetector.available():
+            self._genre_worker = GenreWorker(list(self.library_files))
+            self._genre_worker.genre_done.connect(self._on_genre_done)
+            self._genre_worker.status_msg.connect(
+                lambda msg: self._status.showMessage(msg)
+            )
+            self._genre_worker.all_done.connect(
+                lambda: self._status.showMessage("Genre detection complete")
+            )
+            self._genre_worker.start()
+
+    def _on_genre_done(self, file_path: str, genres_str: str) -> None:
+        """Update the Genre column (col 4) when GenreWorker emits a result."""
+        row = self._row_map.get(file_path)
+        if row is None:
+            return
+        item = QTableWidgetItem(genres_str)
+        item.setToolTip(genres_str)
+        self.track_table.setItem(row, 4, item)
 
     # ------------------------------------------------------------------
     # Detail panel display

@@ -30,6 +30,7 @@ a = Analysis(
         'analyzer.audio_analyzer',
         'analyzer.batch_analyzer',
         'analyzer.similarity',
+        'analyzer.genre_detector',
         'ui',
         'ui.main_window',
         'ui.waveform_dj',
@@ -54,6 +55,9 @@ a = Analysis(
         'watchdog.events',
         'watchdog.utils',
         'watchdog.utils.dirsnapshot',
+        # essentia-tensorflow (genre detection — optional, graceful if absent)
+        'essentia',
+        'essentia.standard',
     ],
     hookspath=[],
     hooksconfig={},
