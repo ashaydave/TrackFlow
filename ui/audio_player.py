@@ -74,6 +74,14 @@ class AudioPlayer(QObject):
         """Start from beginning (or from seek position if recently seeked)."""
         if not self.current_file:
             return
+        # Defensive: kill any loop sound that may still be running before
+        # starting the music stream (prevents double-audio on state bugs).
+        if self._loop_sound is not None:
+            try:
+                self._loop_sound.stop()
+            except Exception:
+                pass
+            self._loop_sound = None
         try:
             pygame.mixer.music.play()
             self.state = PlayerState.PLAYING
@@ -101,6 +109,14 @@ class AudioPlayer(QObject):
             return
         if self.state != PlayerState.PLAYING:
             return
+        # Defensive: if a loop sound somehow outlived its LOOP_PLAYING state,
+        # stop it now so it cannot play over the music after resume.
+        if self._loop_sound is not None:
+            try:
+                self._loop_sound.stop()
+            except Exception:
+                pass
+            self._loop_sound = None
         try:
             self._paused_at_seconds = self._current_seconds()
             pygame.mixer.music.pause()

@@ -1604,7 +1604,10 @@ class MainWindow(QMainWindow):
 
     def _toggle_playback(self):
         state = self.audio_player.state
-        if state == PlayerState.PLAYING:
+        if state in (PlayerState.PLAYING, PlayerState.LOOP_PLAYING):
+            # LOOP_PLAYING must be caught here — it is NOT PLAYING, so without
+            # this check it fell through to the else branch and called play(),
+            # starting the music stream on top of the still-running loop sound.
             self.audio_player.pause()
             self.btn_play.setText("\u25b6  Play")
         elif state == PlayerState.PAUSED:
