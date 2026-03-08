@@ -9,12 +9,14 @@ Two files are downloaded on first use (~37 MB total):
   discogs-effnet-bsdynamic-1.onnx  — full EffNet model (backbone + genre head)
   genre_discogs400-discogs-effnet-1.json  — class labels
 
-Audio preprocessing replicates Essentia's TensorflowPredictEffnetDiscogs:
+Audio preprocessing replicates Essentia's TensorflowInputMusiCNN exactly:
   - 16 kHz mono
-  - 128-band mel spectrogram (HTK scale, 512-sample window, 256-sample hop)
-  - Power-to-dB log compression
-  - Non-overlapping 96-frame patches  → model input [n, 128, 96]
-  - Per-patch standardization (µ=0, σ=1)
+  - 96-band mel spectrogram (Slaney scale, unit_tri normalization,
+    512-sample window, 256-sample hop)
+  - Essentia log compression: log10(10000 * E + 1) → values ≈ [0, 4]
+  - Non-overlapping 128-frame patches → model input [n, 128, 96]
+    where axis 1 = time frames, axis 2 = mel bands
+  - No per-patch normalization (raw log-compressed values fed to model)
 
 Discogs labels are formatted "Electronic---Deep House"; this module strips
 the top-level category so the UI shows "Deep House" instead.
@@ -56,16 +58,16 @@ MODELS = {
 }
 
 # ---------------------------------------------------------------------------
-# Mel spectrogram constants  (match Essentia's EffNet preprocessing)
+# Mel spectrogram constants  (match Essentia's TensorflowInputMusiCNN exactly)
 # ---------------------------------------------------------------------------
 
 _SR     = 16_000   # sample rate (Hz)
 _N_FFT  = 512      # FFT window (32 ms at 16 kHz)
 _HOP    = 256      # hop size   (16 ms at 16 kHz)
-_N_MELS = 128      # mel bands
+_N_MELS = 96       # mel bands  (Slaney scale, unit_tri normalization)
 _FMIN   = 0.0
 _FMAX   = 8_000.0  # Nyquist for 16 kHz
-_PATCH  = 96       # time-frames per patch → [n, 128, 96] model input
+_PATCH  = 128      # time-frames per patch → model input [n, 128_time, 96_mel]
 
 # Built once on first call
 _MEL_FB: np.ndarray | None = None
@@ -73,21 +75,45 @@ _WINDOW: np.ndarray | None = None
 
 
 def _build_mel_fb() -> np.ndarray:
-    """HTK mel filterbank — [n_mels, n_bins] float32."""
-    def hz2mel(h):
-        return 2595.0 * np.log10(1.0 + h / 700.0)
-    def mel2hz(m):
-        return 700.0 * (10.0 ** (m / 2595.0) - 1.0)
+    """Slaney mel filterbank with unit_tri normalization — [n_mels, n_bins] float32.
 
-    freqs = np.fft.rfftfreq(_N_FFT, d=1.0 / _SR).astype(np.float64)
+    Replicates Essentia MelBands(warpingFormula='slaneyMel', normalization='unit_tri'):
+      - Linear mel scale below 1 kHz, logarithmic above
+      - Each triangular filter divided by its bandwidth (area normalization)
+    """
+    # Slaney mel scale constants
+    _MIN_LOG_HZ  = 1000.0
+    _SP          = 200.0 / 3.0          # linear Hz-per-mel below 1 kHz
+    _MIN_LOG_MEL = _MIN_LOG_HZ / _SP
+    _LOGSTEP     = np.log(6.4) / 27.0   # log step above 1 kHz
+
+    def hz2mel(hz: np.ndarray) -> np.ndarray:
+        hz = np.atleast_1d(np.asarray(hz, float))
+        mel = hz / _SP
+        mask = hz >= _MIN_LOG_HZ
+        mel[mask] = _MIN_LOG_MEL + np.log(hz[mask] / _MIN_LOG_HZ) / _LOGSTEP
+        return mel
+
+    def mel2hz(mel: np.ndarray) -> np.ndarray:
+        mel = np.atleast_1d(np.asarray(mel, float))
+        hz = _SP * mel
+        mask = mel >= _MIN_LOG_MEL
+        hz[mask] = _MIN_LOG_HZ * np.exp(_LOGSTEP * (mel[mask] - _MIN_LOG_MEL))
+        return hz
+
+    freqs   = np.fft.rfftfreq(_N_FFT, d=1.0 / _SR).astype(np.float64)
     mel_pts = np.linspace(hz2mel(_FMIN), hz2mel(_FMAX), _N_MELS + 2)
     hz_pts  = mel2hz(mel_pts)
+
     fb = np.zeros((_N_MELS, len(freqs)), dtype=np.float32)
     for i in range(_N_MELS):
         lo, mid, hi = hz_pts[i], hz_pts[i + 1], hz_pts[i + 2]
-        rise = (freqs - lo)  / (mid - lo  + 1e-8)
-        fall = (hi - freqs)  / (hi  - mid + 1e-8)
-        fb[i] = np.clip(np.minimum(rise, fall), 0.0, 1.0).astype(np.float32)
+        rise = (freqs - lo) / (mid - lo + 1e-8)
+        fall = (hi - freqs) / (hi - mid + 1e-8)
+        tri  = np.clip(np.minimum(rise, fall), 0.0, 1.0)
+        # unit_tri: divide by triangle area so filters are area-normalised
+        tri *= 2.0 / (hi - lo + 1e-8)
+        fb[i] = tri.astype(np.float32)
     return fb
 
 
@@ -95,8 +121,14 @@ def _mel_patches(audio: np.ndarray) -> np.ndarray:
     """
     Convert 16 kHz mono audio to non-overlapping mel spectrogram patches.
 
-    Returns float32 array of shape [n_patches, 128, 96].
-    Standardises each patch to µ=0, σ=1 (Essentia EffNet convention).
+    Returns float32 array of shape [n_patches, 128, 96]
+    where axis 1 = time frames (128 per patch) and axis 2 = mel bands (96).
+
+    Preprocessing matches Essentia's TensorflowInputMusiCNN exactly:
+      - Slaney mel filterbank with unit_tri normalization
+      - Power spectrum fed through mel filterbank
+      - Essentia log compression: log10(10000 * E + 1) → values ≈ [0, 4]
+      - No per-patch z-score (raw log values passed directly to model)
     """
     global _MEL_FB, _WINDOW
     if _MEL_FB is None:
@@ -122,29 +154,25 @@ def _mel_patches(audio: np.ndarray) -> np.ndarray:
     # Power spectrum: [n_bins, n_frames]
     S = np.abs(rfft(framed * _WINDOW.reshape(-1, 1), axis=0)) ** 2
 
-    # Mel spectrogram: [128, n_frames]
+    # Slaney mel spectrogram: [96, n_frames]
     mel = _MEL_FB @ S
 
-    # Power to dB
-    mel_db = 10.0 * np.log10(np.maximum(mel, 1e-7))  # [128, n_frames]
+    # Essentia log compression: log10(10000 * E + 1) — output range ≈ [0, 4]
+    mel_log = np.log10(10_000.0 * mel + 1.0)  # [96, n_frames]
 
-    # Extract non-overlapping patches
+    # Extract non-overlapping patches of 128 time frames
     n_patches = n_frames // _PATCH
     if n_patches == 0:
         # Pad to one full patch
-        pad_cols = _PATCH - mel_db.shape[1]
-        mel_db = np.pad(mel_db, ((0, 0), (0, pad_cols)))
+        pad_cols = _PATCH - mel_log.shape[1]
+        mel_log = np.pad(mel_log, ((0, 0), (0, pad_cols)))
         n_patches = 1
 
-    mel_trim = mel_db[:, : n_patches * _PATCH]                  # [128, n*96]
-    patches = mel_trim.reshape(_N_MELS, n_patches, _PATCH)      # [128, n, 96]
-    patches = patches.transpose(1, 0, 2)                        # [n, 128, 96]
+    mel_trim = mel_log[:, : n_patches * _PATCH]             # [96, n*128]
+    patches  = mel_trim.reshape(_N_MELS, n_patches, _PATCH) # [96, n, 128]
+    patches  = patches.transpose(1, 2, 0)                   # [n, 128, 96]
 
-    # Per-patch standardisation (subtract mean, divide by std)
-    mu    = patches.mean(axis=(1, 2), keepdims=True)
-    sigma = patches.std(axis=(1, 2), keepdims=True) + 1e-8
-    patches = (patches - mu) / sigma
-
+    # No per-patch normalisation — Essentia feeds raw log values to the model
     return patches.astype(np.float32)
 
 
