@@ -129,7 +129,7 @@ class HelpDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("TrackFlow — Help")
-        self.setMinimumSize(480, 520)
+        self.setMinimumSize(520, 600)
         self.setModal(False)
 
         outer = QVBoxLayout(self)
@@ -250,15 +250,46 @@ class HelpDialog(QDialog):
             "across the 12 semitones."
         )
         para(
+            "MFCCs are computed as the DCT-II of the log mel spectrogram — they compress the "
+            "spectral envelope into a small number of coefficients that describe timbre without "
+            "encoding pitch or key, making them ideal for matching 'feel' rather than melody."
+        )
+        para(
             "Similarity is cosine distance between two feature vectors — "
             "it measures the angle between them, not their magnitude, so loudness differences "
-            "do not affect the score. The raw cosine value (\u22121 to +1) is mapped to a "
-            "0\u2013100\u202f% match score."
+            "do not affect the score: cos(\u03b8)\u202f=\u202f(a\u00b7b)\u202f/\u202f(|a||b|). "
+            "The raw cosine value (\u22121 to +1) is mapped to a 0\u2013100\u202f% match score. "
+            "Top 25 matches are returned, sorted by score."
         )
         para(
             "Requires tracks to be analyzed first (Analyze All). "
             "Old cache entries from before the similarity feature was added will show "
-            "\u201cNo similar tracks found\u201d — re-run Analyze All to regenerate them."
+            "\u201cNo similar tracks found\u201d \u2014 re-run Analyze All to regenerate them."
+        )
+
+        # ── Section 6: Genre Detection ────────────────────────────────
+        lay.addSpacing(4)
+        divider()
+        header("Genre Detection")
+        lay.addSpacing(2)
+        para(
+            "Uses Essentia\u2019s Discogs-EffNet model \u2014 an EfficientNet neural network "
+            "trained on 400 Discogs genre and style labels (Deep House, Techno, Drum n Bass, "
+            "Jazz, Classical, and 395 more). Runs via ONNX Runtime; no TensorFlow required. "
+            "The model (~37\u202fMB) downloads automatically on first use."
+        )
+        para(
+            "Audio preprocessing exactly replicates Essentia\u2019s TensorflowInputMusiCNN pipeline: "
+            "96-band Slaney mel spectrogram (512-sample FFT, 256-sample hop, unit_tri normalization), "
+            "Essentia log compression log\u2081\u2080(10\u202f000\u202f\u00d7\u202fE\u202f+\u202f1), "
+            "sliced into non-overlapping 128-frame patches \u2192 model input shape [n, 128, 96] "
+            "where axis\u202f1 is time and axis\u202f2 is frequency. "
+            "Probabilities are averaged across all patches; the top\u202f3 genres are displayed."
+        )
+        para(
+            "Genre detection runs automatically after Analyze All completes. "
+            "Results are cached per-track — subsequent loads are instant. "
+            "The Genre column is user-resizable; hover for the full label."
         )
 
         lay.addStretch()

@@ -21,17 +21,18 @@
 ## Features
 
 ### 📊 Analysis Engine
-- BPM detection via onset-based autocorrelation (analyzes first 60s for speed)
-- Musical key detection using chroma-based Krumhansl–Schmuckler algorithm with Camelot and Open Key notation
-- Energy level scoring (1–10) from full-track RMS via chunked reads
+- **BPM detection** via onset-based autocorrelation on a mel spectrogram — analyzes first 60s, pure NumPy/SciPy (no librosa/numba overhead)
+- **Musical key detection** using chroma-based Krumhansl–Schmuckler profiles across all 24 major/minor keys, returned in standard, Camelot wheel, and Open Key notation
+- **Energy level scoring** (1–10) from full-track RMS via 65 536-sample chunked reads — constant memory usage regardless of file size
+- **Genre detection** using Essentia's Discogs-EffNet model (400 Discogs genre/style labels) via ONNX Runtime — no TensorFlow required, works on Windows. Top genres appear in the library table and cache per-track
 - Audio metadata extraction (format, bitrate, sample rate, duration, file size)
 - Batch analysis with background thread pool and JSON cache (skips already-analyzed tracks)
 
 ### 🔍 Track Similarity
 - Find the 25 most similar tracks in your library to any loaded track
-- 32-dimensional feature vectors: 20 MFCC coefficients (timbre/texture) + 12 chroma means (pitch class)
-- Cosine similarity scoring — loudness-independent, shown as 0–100% match
-- Results in a dedicated Similar tab with BPM, key, and score; double-click to load
+- **32-dimensional feature vectors**: 20 MFCC coefficients (timbral texture, spectral envelope) + 12 chroma means (pitch-class energy across the 12 semitones)
+- **Cosine similarity** — measures the angle between feature vectors, not their magnitude, so loudness differences between tracks don't affect the score. Displayed as 0–100% match
+- Results in a dedicated **Similar** tab with BPM, key, and score; double-click to load
 
 ### 🌊 Waveform & Visualization
 - Frequency-colored filled waveform: **red** = bass (0–200 Hz), **amber** = mids (200–4000 Hz), **cyan** = highs (4000+ Hz)
@@ -126,8 +127,10 @@ conda create -n dj-analyzer python=3.11 -y
 conda activate dj-analyzer
 
 # Install dependencies
-pip install PyQt6 numpy scipy soundfile soxr mutagen pygame yt-dlp watchdog
+pip install PyQt6 numpy scipy soundfile soxr mutagen pygame yt-dlp watchdog onnxruntime
 ```
+
+> **Genre detection** requires `onnxruntime` (included above). The Discogs-EffNet model (~37 MB) downloads automatically on first use. If `onnxruntime` is unavailable the rest of the app works normally — the Genre column simply stays empty.
 
 ### Run
 
@@ -192,6 +195,7 @@ TrackFlow/
 ├── analyzer/
 │   ├── audio_analyzer.py      # BPM / key / energy / MFCC / chroma engine
 │   ├── batch_analyzer.py      # Background batch analysis + JSON cache
+│   ├── genre_detector.py      # Discogs-EffNet ONNX genre detection (400 styles)
 │   └── similarity.py          # 32-dim cosine similarity search
 ├── downloader/
 │   ├── yt_handler.py          # DownloadWorker(QThread) — yt-dlp wrapper,
@@ -220,6 +224,8 @@ TrackFlow/
     ├── test_analyzer_speed.py
     ├── test_batch_analyzer.py
     ├── test_similarity.py
+    ├── test_genre.py          # 17 tests — genre cache, model manifest, label cleaning,
+    │                          #   format_genres edge cases, onnxruntime availability
     └── test_downloads.py      # FolderWatcher, AppleMusicSource, AppleMusicURLSource,
                                #   sync state, yt_handler imports
 ```
