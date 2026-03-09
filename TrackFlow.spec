@@ -18,23 +18,16 @@
 #   cache/                                     (analysis results)
 #   playlists.json, hot_cues.json, sync_state.json
 
+import sys
 from pathlib import Path
 
 block_cipher = None
 
 # ── Collect packages that ship native DLLs / data files ────────────────────
-# Must run before Analysis so the results can be passed in.
+# collect_all() returns plain 2-tuples (src, dest) for datas and binaries.
+# Do NOT convert to 3-tuples — PyInstaller 6.x Analysis() only accepts
+# 2-tuples in the binaries list and will raise ValueError otherwise.
 from PyInstaller.utils.hooks import collect_all
-
-def _norm3(items, typecode='DATA'):
-    """Normalise to 3-tuples — works with PyInstaller 5.x and 6.x."""
-    out = []
-    for item in items:
-        if len(item) == 3:
-            out.append(item)
-        elif len(item) == 2:
-            out.append((item[0], item[1], typecode))
-    return out
 
 _extra_datas    = []
 _extra_binaries = []
@@ -43,16 +36,39 @@ _extra_hidden   = []
 for _pkg in (
     'PyQt6',        # Qt6 platform plugins, DLLs, translations
     'onnxruntime',  # onnxruntime.dll, onnxruntime_providers_shared.dll, etc.
-    'soundfile',    # libsndfile-1.dll
     'soxr',         # soxr Cython extension (.pyd)
     'pygame',       # SDL2.dll, SDL2_mixer.dll, etc.
-    'mutagen',      # tag-reading for every format
-    'yt_dlp',       # all extractors + postprocessors (needed for dynamic imports)
+    'mutagen',      # tag-reading for every audio format
+    'yt_dlp',       # all extractors + postprocessors (dynamic imports)
 ):
     _d, _b, _h = collect_all(_pkg)
-    _extra_datas    += _norm3(_d, 'DATA')
-    _extra_binaries += _norm3(_b, 'BINARY')
+    _extra_datas    += _d   # 2-tuples — safe to extend directly
+    _extra_binaries += _b   # 2-tuples — do NOT wrap in _norm3()
     _extra_hidden   += _h
+
+# soundfile: the DLL (libsndfile_x64.dll on modern pip installs) lives in a
+# _soundfile_data/ directory adjacent to site-packages, NOT inside the soundfile
+# package itself.  soundfile.py loads it via ctypes relative to __file__:
+#   dirname(soundfile.__file__) + '/_soundfile_data/libsndfile_x64.dll'
+# When frozen, __file__ resolves inside _MEIPASS, so the whole _soundfile_data/
+# directory must be copied there — use datas (not binaries) to preserve the
+# relative path.
+_sf_data = Path(sys.prefix) / 'Lib' / 'site-packages' / '_soundfile_data'
+if _sf_data.exists():
+    _extra_datas.append((str(_sf_data), '_soundfile_data'))
+else:
+    # Fallback for older installs that name the DLL libsndfile-1.dll
+    for _sf_dll in (
+        Path(sys.prefix) / 'Library' / 'bin' / 'libsndfile-1.dll',   # conda (Windows)
+        Path(sys.prefix) / 'Library' / 'bin' / 'libsndfile_x64.dll', # conda alt name
+        Path(sys.prefix) / 'DLLs'   / 'libsndfile-1.dll',
+    ):
+        if _sf_dll.exists():
+            _extra_binaries.append((str(_sf_dll), '.'))
+            break
+    else:
+        print("WARNING: libsndfile DLL not found — audio loading may fail in the built exe.")
+        print("         Try: pip install soundfile  (bundles the DLL automatically)")
 
 # ── Main analysis ───────────────────────────────────────────────────────────
 a = Analysis(
@@ -79,7 +95,7 @@ a = Analysis(
         'mutagen.aiff',
         'mutagen.id3',
         'mutagen._tags',
-        # scipy — list submodules used; scipy uses lazy imports internally
+        # scipy — list the submodules actually used
         'scipy.fft',
         'scipy.fftpack',
         'scipy.signal',
@@ -121,7 +137,7 @@ a = Analysis(
         'watchdog',
         'watchdog.observers',
         'watchdog.observers.polling',
-        'watchdog.observers.winapi',   # Windows native ReadDirectoryChangesW
+        'watchdog.observers.winapi',    # Windows native ReadDirectoryChangesW
         'watchdog.events',
         'watchdog.utils',
         'watchdog.utils.dirsnapshot',
@@ -129,14 +145,14 @@ a = Analysis(
         'onnxruntime',
         'onnxruntime.capi',
         'onnxruntime.capi._pybind_state',
-        # ── extras collected from collect_all() calls above ──────────────
+        # ── extras from collect_all() calls above ─────────────────────────
         *_extra_hidden,
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Never needed — exclude to keep build lean
+        # Exclude heavy packages that are never used at runtime
         'tkinter',
         'matplotlib',
         'IPython',
@@ -147,7 +163,7 @@ a = Analysis(
         'torchaudio',
         'sklearn',
         'pandas',
-        'PIL',              # Pillow not used at runtime (only in build.bat)
+        'PIL',              # Pillow only used in build.bat for icon conversion
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -166,10 +182,10 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,          # UPX can corrupt native DLLs (onnxruntime, SDL2)
+    upx=False,          # UPX can corrupt onnxruntime + SDL2 DLLs — keep off
     console=False,      # no terminal window
-    # Icon: build.bat converts logo_256.png → logo.ico via Pillow before
-    # running pyinstaller.  Falls back to no icon if conversion failed.
+    # build.bat converts logo_256.png -> logo.ico before running pyinstaller.
+    # Falls back to no icon if the conversion step was skipped.
     icon='assets/logo.ico' if Path('assets/logo.ico').exists() else None,
 )
 
