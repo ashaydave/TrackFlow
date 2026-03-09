@@ -104,7 +104,6 @@ a = Analysis(
         'scipy.special',
         # numpy internals surfaced at import time in some builds
         'numpy',
-        'numpy.core._methods',
         'numpy.lib.format',
         # ── App modules — Phase 1 ────────────────────────────────────────
         'paths',
