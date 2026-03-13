@@ -149,7 +149,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['rthook_onnxruntime.py'],
     excludes=[
         # Exclude heavy packages that are never used at runtime
         'tkinter',
@@ -163,6 +163,11 @@ a = Analysis(
         'sklearn',
         'pandas',
         'PIL',              # Pillow only used in build.bat for icon conversion
+        # onnxruntime.quantization needs the 'onnx' package which we don't install.
+        # We only use ORT for inference, not quantization — safe to exclude entirely.
+        'onnxruntime.quantization',
+        'onnxruntime.tools',
+        'onnx',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

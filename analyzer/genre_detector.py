@@ -273,7 +273,8 @@ class GenreDetector:
         try:
             import onnxruntime  # noqa: F401
             return True
-        except ImportError:
+        except Exception as exc:
+            print(f"onnxruntime import failed: {type(exc).__name__}: {exc}")
             return False
 
     def __init__(self, model_paths: dict):

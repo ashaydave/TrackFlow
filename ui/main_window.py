@@ -391,17 +391,23 @@ class GenreWorker(QThread):
 
         # 1. Download models if needed (blocking, but in background thread)
         self.status_msg.emit("Genre detection: checking models…")
-        model_paths = ensure_models(status_callback=lambda m: self.status_msg.emit(m))
+        model_paths = ensure_models(status_callback=lambda m: (
+            self.status_msg.emit(m), print(m)
+        ))
         if model_paths is None:
-            self.status_msg.emit("Genre detection skipped — model download failed")
+            msg = "Genre detection skipped — model download failed"
+            print(msg)
+            self.status_msg.emit(msg)
             self.all_done.emit()
             return
 
-        # 2. Initialise detector (loads TF graphs into memory)
+        # 2. Initialise detector (loads ONNX session into memory)
         try:
             detector = GenreDetector(model_paths)
         except Exception as exc:
-            self.status_msg.emit(f"Genre detection skipped — init error: {exc}")
+            msg = f"Genre detection skipped — init error: {exc}"
+            print(msg)
+            self.status_msg.emit(msg)
             self.all_done.emit()
             return
 
@@ -1615,17 +1621,25 @@ class MainWindow(QMainWindow):
         self._status.showMessage(
             f"Done \u2014 {analyzed} analyzed, {cached} from cache, {analyzed + cached} total"
         )
-        # Kick off genre detection in background (gracefully skipped if essentia absent)
-        if self.library_files and GenreDetector.available():
-            self._genre_worker = GenreWorker(list(self.library_files))
-            self._genre_worker.genre_done.connect(self._on_genre_done)
-            self._genre_worker.status_msg.connect(
-                lambda msg: self._status.showMessage(msg)
+        # Kick off genre detection in background (gracefully skipped if onnxruntime absent)
+        if not self.library_files:
+            return
+        if not GenreDetector.available():
+            print("GenreDetector.available() returned False — onnxruntime not importable")
+            self._status.showMessage(
+                "Genre detection unavailable — onnxruntime not found. "
+                "Check %APPDATA%\\TrackFlow\\trackflow.log for details.", 8000
             )
-            self._genre_worker.all_done.connect(
-                lambda: self._status.showMessage("Genre detection complete")
-            )
-            self._genre_worker.start()
+            return
+        self._genre_worker = GenreWorker(list(self.library_files))
+        self._genre_worker.genre_done.connect(self._on_genre_done)
+        self._genre_worker.status_msg.connect(
+            lambda msg: self._status.showMessage(msg, 6000)
+        )
+        self._genre_worker.all_done.connect(
+            lambda: self._status.showMessage("Genre detection complete")
+        )
+        self._genre_worker.start()
 
     def _on_genre_done(self, file_path: str, genres_str: str) -> None:
         """Update the Genre column (col 4) when GenreWorker emits a result."""
