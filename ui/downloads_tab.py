@@ -246,8 +246,10 @@ class DownloadsTab(QWidget):
             1, QHeaderView.ResizeMode.Stretch)
         self._yt_table.horizontalHeader().setSectionResizeMode(
             2, QHeaderView.ResizeMode.ResizeToContents)
+        self._yt_table.verticalHeader().setVisible(False)
         self._yt_table.verticalHeader().setDefaultSectionSize(26)
         self._yt_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._yt_table.setMaximumHeight(100)
         yt_lay.addWidget(self._yt_table)
 
         yt_btn_row = QHBoxLayout()
@@ -291,9 +293,10 @@ class DownloadsTab(QWidget):
             0, QHeaderView.ResizeMode.Stretch)
         self._am_table.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.ResizeToContents)
-        self._am_table.setMaximumHeight(150)
+        self._am_table.verticalHeader().setVisible(False)
         self._am_table.verticalHeader().setDefaultSectionSize(26)
         self._am_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._am_table.setMaximumHeight(100)
         am_lay.addWidget(self._am_table)
 
         # Secondary: iTunes XML option (less prominent)
