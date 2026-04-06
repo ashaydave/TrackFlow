@@ -583,8 +583,21 @@ class SpotifyPlaylistSource:
     # ------------------------------------------------------------------
 
     def _fetch_page(self) -> str | None:
-        """Fetch the Spotify playlist page HTML."""
+        """Fetch the Spotify embed page HTML.
+
+        The main open.spotify.com page is a client-side SPA with no track
+        data in the HTML.  The /embed/ variant is server-rendered and
+        includes a __NEXT_DATA__ JSON blob with the full track list.
+        """
+        import re
         import urllib.request
+
+        # Convert open.spotify.com/playlist/ID → open.spotify.com/embed/playlist/ID
+        embed_url = re.sub(
+            r'(open\.spotify\.com)/playlist/',
+            r'\1/embed/playlist/',
+            self.url,
+        )
 
         headers = {
             "User-Agent": (
@@ -594,7 +607,7 @@ class SpotifyPlaylistSource:
             "Accept-Language": "en-US,en;q=0.9",
         }
         try:
-            req = urllib.request.Request(self.url, headers=headers)
+            req = urllib.request.Request(embed_url, headers=headers)
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return resp.read().decode("utf-8", errors="replace")
         except Exception:
@@ -652,11 +665,19 @@ class SpotifyPlaylistSource:
         import json
         import re
 
-        # __NEXT_DATA__
+        # __NEXT_DATA__ — the embed page stores trackList here
         m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', page, re.DOTALL)
         if m:
             try:
-                result = self._extract_tracks_from_json(json.loads(m.group(1)))
+                data = json.loads(m.group(1))
+                # Direct path: props.pageProps.state.data.entity.trackList
+                entity = (data.get("props", {}).get("pageProps", {})
+                          .get("state", {}).get("data", {}).get("entity", {}))
+                track_list = entity.get("trackList", [])
+                if track_list:
+                    return self._parse_embed_tracklist(track_list)
+                # Fallback: recursive hunt
+                result = self._extract_tracks_from_json(data)
                 if result:
                     return result
             except Exception:
@@ -673,6 +694,19 @@ class SpotifyPlaylistSource:
                 pass
 
         return None
+
+    @staticmethod
+    def _parse_embed_tracklist(track_list: list[dict]) -> list[dict]:
+        """Parse the trackList array from Spotify's embed __NEXT_DATA__."""
+        tracks = []
+        for item in track_list:
+            title = (item.get("title") or "").strip()
+            if not title:
+                continue
+            artist = (item.get("subtitle") or "").replace("\xa0", " ").strip()
+            track_id = item.get("uri") or f"{title}::{artist}"
+            tracks.append({"id": track_id, "title": title, "artist": artist})
+        return tracks
 
     # ------------------------------------------------------------------
     # Strategy 3: Broad script-tag hunt
@@ -748,8 +782,8 @@ class SpotifyPlaylistSource:
                     else:
                         artist = str(artists[0])
                 else:
-                    artist = (obj.get("artist") or "")
-                return [{"id": f"{name}::{artist}", "title": name, "artist": str(artist)}]
+                    artist = (obj.get("artist") or obj.get("subtitle") or "")
+                return [{"id": f"{name}::{artist}", "title": name, "artist": str(artist).replace("\xa0", " ")}]
             results: list[dict] = []
             for v in obj.values():
                 results.extend(SpotifyPlaylistSource._extract_tracks_from_json(v, _depth + 1))
