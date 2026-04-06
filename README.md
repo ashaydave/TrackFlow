@@ -81,6 +81,8 @@ Subscribe to YouTube, Apple Music, or Spotify playlists. On every app launch, Tr
 
 For Apple Music, Spotify, and Shazam tracks, TrackFlow searches YouTube using three query variants (`Artist - Title`, `Title Artist`, `Artist Title official audio`) and downloads the best match. Tracks not found on YouTube are shown in a **Not Found** table for manual retry.
 
+> **Note:** Some YouTube videos are age-restricted and cannot be downloaded without browser cookies. These tracks will appear as "Age-restricted" in the Not Found table. Most tracks have alternate non-restricted uploads that TrackFlow will find automatically.
+
 Sync state is persisted in `data/sync_state.json` — already-downloaded tracks are never re-queued. Use **🗑 Clear Cache** next to any subscription to reset its sync history (useful when testing or re-downloading a playlist).
 
 #### SoulSeek Watcher
