@@ -310,6 +310,35 @@ class DownloadsTab(QWidget):
         am_lay.addLayout(am_btn_row)
         lay.addWidget(am_group)
 
+        # ── Spotify ───────────────────────────────────────────────────
+        sp_group = QGroupBox("Spotify")
+        sp_lay   = QVBoxLayout(sp_group)
+        sp_lay.setSpacing(6)
+
+        sp_url_row = QHBoxLayout()
+        sp_url_row.addWidget(QLabel("Playlist URL:"))
+        self._sp_url_edit = QLineEdit()
+        self._sp_url_edit.setPlaceholderText(
+            "Paste a open.spotify.com/playlist/... URL and press Enter…")
+        self._sp_url_edit.returnPressed.connect(self._on_add_spotify_url)
+        sp_url_row.addWidget(self._sp_url_edit, stretch=1)
+        btn_sp_add = QPushButton("+ Add")
+        btn_sp_add.setFixedWidth(72)
+        btn_sp_add.clicked.connect(self._on_add_spotify_url)
+        sp_url_row.addWidget(btn_sp_add)
+        sp_lay.addLayout(sp_url_row)
+
+        self._sp_table = QTableWidget(0, 2)
+        self._sp_table.setHorizontalHeaderLabels(["Playlist", ""])
+        self._sp_table.horizontalHeader().setSectionResizeMode(
+            0, self._sp_table.horizontalHeader().ResizeMode.Stretch)
+        self._sp_table.horizontalHeader().setSectionResizeMode(
+            1, self._sp_table.horizontalHeader().ResizeMode.ResizeToContents)
+        self._sp_table.verticalHeader().setVisible(False)
+        self._sp_table.setMaximumHeight(100)
+        sp_lay.addWidget(self._sp_table)
+        lay.addWidget(sp_group)
+
         # ── Sync controls ──────────────────────────────────────────────
         sync_row = QHBoxLayout()
         self.btn_sync = QPushButton("🔄  Sync Now")
@@ -791,6 +820,35 @@ class DownloadsTab(QWidget):
         """Legacy dialog-based Apple Music URL add (kept for internal compatibility)."""
         self._on_quick_add_am_url()
 
+    def _on_add_spotify_url(self) -> None:
+        """Add a Spotify playlist URL from the URL field."""
+        url = self._sp_url_edit.text().strip()
+        if not url:
+            return
+        if "open.spotify.com/playlist" not in url:
+            QMessageBox.warning(
+                self, "Invalid URL",
+                "Please paste a open.spotify.com/playlist URL.\n"
+                "Example: https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoY…")
+            return
+        # Ask for a friendly label
+        label, ok = QInputDialog.getText(
+            self, "Playlist Label",
+            "Name for this playlist (shown in the queue Source column):",
+            text=url.rstrip("/").split("/")[-1].split("?")[0] if "/" in url else "Spotify")
+        if not ok:
+            return
+        label = label.strip() or url
+        subs = self._config.setdefault("subscriptions", [])
+        # Avoid duplicates
+        if any(s.get("url") == url for s in subs):
+            QMessageBox.information(self, "Already Added", "This playlist is already subscribed.")
+            return
+        subs.append({"type": "spotify", "url": url, "label": label})
+        self._save_config()
+        self._sp_url_edit.clear()
+        self._refresh_subscription_tables()
+
     def _on_clear_sync_cache(self) -> None:
         """Reset sync state so all playlist tracks re-queue on next sync."""
         from downloader.playlist_sync import save_sync_state
@@ -888,6 +946,7 @@ class DownloadsTab(QWidget):
         """Repopulate both subscription tables from config."""
         self._yt_table.setRowCount(0)
         self._am_table.setRowCount(0)
+        self._sp_table.setRowCount(0)
         for sub in self._config.get("subscriptions", []):
             if sub.get("type") == "youtube":
                 self._add_yt_row(sub["url"], sub.get("label", sub["url"]))
@@ -898,6 +957,12 @@ class DownloadsTab(QWidget):
                     sub.get("label", sub["url"]),
                     key=sub["url"],
                     sub_type="apple_music_url",
+                    tooltip=sub["url"],
+                )
+            elif sub.get("type") == "spotify":
+                self._add_sp_row(
+                    sub.get("label", sub["url"]),
+                    url=sub["url"],
                     tooltip=sub["url"],
                 )
 
@@ -944,6 +1009,24 @@ class DownloadsTab(QWidget):
             lambda: self._remove_subscription(sub_type, rm_key))
         self._am_table.setCellWidget(row, 1, btn_rm)
 
+    def _add_sp_row(
+        self,
+        display: str,
+        url: str = "",
+        tooltip: str = "",
+    ) -> None:
+        """Add a row to the Spotify table."""
+        row = self._sp_table.rowCount()
+        self._sp_table.insertRow(row)
+        item = QTableWidgetItem(display)
+        if tooltip:
+            item.setToolTip(tooltip)
+        self._sp_table.setItem(row, 0, item)
+        btn_rm = self._make_remove_btn()
+        btn_rm.clicked.connect(
+            lambda: self._remove_subscription("spotify", url))
+        self._sp_table.setCellWidget(row, 1, btn_rm)
+
     def _remove_subscription(self, sub_type: str, key: str) -> None:
         subs = self._config.get("subscriptions", [])
         if sub_type == "youtube":
@@ -955,6 +1038,11 @@ class DownloadsTab(QWidget):
             self._config["subscriptions"] = [
                 s for s in subs
                 if not (s.get("type") == "apple_music_url" and s.get("url") == key)
+            ]
+        elif sub_type == "spotify":
+            self._config["subscriptions"] = [
+                s for s in subs
+                if not (s.get("type") == "spotify" and s.get("url") == key)
             ]
         else:
             self._config["subscriptions"] = [
