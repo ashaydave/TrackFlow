@@ -7,7 +7,7 @@
 <p align="center">
   A desktop DJ track analysis, preview, and download tool built with PyQt6.<br>
   Analyze BPM, key, and energy across your library — then preview, loop, cue, find similar tracks,<br>
-  organize playlists, and auto-download new music from YouTube, Apple Music, Shazam, and SoulSeek.
+  organize playlists, and auto-download new music from YouTube, Apple Music, Spotify, Shazam, and SoulSeek.
 </p>
 
 <p align="center">
@@ -69,16 +69,17 @@
 - Bulk **Import Selected** adds finished tracks to the library and auto-triggers analysis
 
 #### Playlist Subscriptions
-Subscribe to YouTube playlists or Apple Music playlists. On every app launch, TrackFlow checks for new additions and queues them automatically.
+Subscribe to YouTube, Apple Music, or Spotify playlists. On every app launch, TrackFlow checks for new additions and queues them automatically.
 
 | Source | How it works |
 |---|---|
 | **YouTube Playlist** | yt-dlp `extract_flat` fetches the playlist index; new video IDs are downloaded directly |
 | **Apple Music URL** | Paste any public `music.apple.com` playlist URL — TrackFlow extracts the anonymous JWT developer token from Apple's web-player JS bundle and calls the Apple Music catalog API to list tracks |
 | **iTunes XML** | Parses the `iTunes Music Library.xml` written by Apple Music for Windows (uses Python stdlib `plistlib`) — works for private/personal playlists not accessible via URL |
+| **Spotify** | Paste any public `open.spotify.com/playlist/...` URL — TrackFlow scrapes embedded track metadata from the playlist page (no API key needed) |
 | **Shazam** | Shazam syncs to Apple Music — enable the Apple Music integration and add the "Shazam Library" playlist via iTunes XML |
 
-For Apple Music and Shazam tracks, TrackFlow searches YouTube using three query variants (`Artist - Title`, `Title Artist`, `Artist Title official audio`) and downloads the best match. Tracks not found on YouTube are shown in a **Not Found** table for manual retry.
+For Apple Music, Spotify, and Shazam tracks, TrackFlow searches YouTube using three query variants (`Artist - Title`, `Title Artist`, `Artist Title official audio`) and downloads the best match. Tracks not found on YouTube are shown in a **Not Found** table for manual retry.
 
 Sync state is persisted in `data/sync_state.json` — already-downloaded tracks are never re-queued. Use **🗑 Clear Cache** next to any subscription to reset its sync history (useful when testing or re-downloading a playlist).
 
@@ -167,12 +168,15 @@ Requires PyInstaller (`pip install pyinstaller`) and the conda environment above
 3. **Apple Music (URL):**
    - Paste a public `music.apple.com` playlist URL into the **Apple Music URL** field and click **+ Subscribe**
    - TrackFlow automatically fetches the track list from the Apple Music catalog API
-4. **Apple Music (iTunes XML / Shazam):**
+4. **Spotify:**
+   - Paste a public `open.spotify.com/playlist/...` URL into the **Spotify** field and click **+ Add**
+   - TrackFlow scrapes the track list from the public page (no API key required)
+5. **Apple Music (iTunes XML / Shazam):**
    - Click **Detect** to auto-find your `iTunes Music Library.xml`, or browse manually
    - Click **+ Add Playlist** and type the playlist name exactly as it appears in Apple Music (e.g. `Shazam Library`)
-5. Click **🔄 Sync Now** to run a manual check, or simply relaunch the app — sync runs automatically 2 seconds after startup
-6. Use **🗑 Clear Cache** next to a subscription to re-sync all tracks (bypasses the already-seen filter)
-7. New tracks appear in the Queue tab; click **Import Selected** to bring them into the library
+6. Click **🔄 Sync Now** to run a manual check, or simply relaunch the app — sync runs automatically 2 seconds after startup
+7. Use **🗑 Clear Cache** next to a subscription to re-sync all tracks (bypasses the already-seen filter)
+8. New tracks appear in the Queue tab; click **Import Selected** to bring them into the library
 
 ### SoulSeek Watcher
 
@@ -202,7 +206,7 @@ TrackFlow/
 │   │                          #   ffmpeg auto-detection, MP3/M4A format selection
 │   ├── watcher.py             # FolderWatcher(QObject) — watchdog wrapper
 │   └── playlist_sync.py       # YouTubePlaylistSource, AppleMusicSource,
-│                              #   AppleMusicURLSource (catalog API + JWT extraction),
+│                              #   AppleMusicURLSource, SpotifyPlaylistSource,
 │                              #   PlaylistSyncWorker, search_youtube()
 ├── ui/
 │   ├── main_window.py         # Main window, Library tab, all DJ controls
