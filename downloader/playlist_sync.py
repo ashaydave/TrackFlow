@@ -1,14 +1,17 @@
 """
-Playlist sync: detects new tracks in subscribed YouTube playlists and
-Apple Music / iTunes XML playlists, and queues them for download.
+Playlist sync: detects new tracks in subscribed YouTube playlists,
+Apple Music / iTunes XML playlists, and Spotify playlists, and queues
+them for download.
 
 Sources
 -------
 - YouTubePlaylistSource  — uses yt-dlp extract_flat to list a playlist
 - AppleMusicSource       — parses Apple Music for Windows / iTunes XML via stdlib plistlib
+- AppleMusicURLSource    — scrapes public Apple Music playlist URLs
+- SpotifyPlaylistSource  — scrapes public Spotify playlist URLs
 
-For Apple Music / Shazam tracks (no YouTube URL), search_youtube() tries
-3 query variants and returns the first match.
+For Apple Music / Shazam / Spotify tracks (no YouTube URL),
+search_youtube() tries 3 query variants and returns the first match.
 
 State persistence
 -----------------
@@ -513,6 +516,250 @@ class AppleMusicURLSource:
                 "artist": artist,
             })
         return tracks
+
+
+class SpotifyPlaylistSource:
+    """
+    Fetches the track list from a public Spotify playlist URL.
+
+    Scrapes embedded JSON data from the playlist page — works for any
+    public playlist without authentication.  For each track found,
+    PlaylistSyncWorker will call search_youtube() to locate a matching
+    YouTube video.
+
+    Parameters
+    ----------
+    url   : Full https://open.spotify.com/playlist/… URL
+    label : Human-readable name shown in the Queue source column
+    """
+
+    def __init__(self, url: str, label: str = ""):
+        self.url = url
+        self.label = label or "Spotify"
+        self.source_id = f"spotify::{url}"
+        self.last_error: str | None = None  # set on fetch failure
+
+    def get_tracks(self) -> list[dict]:
+        """
+        Returns list of dicts: {id, title, artist}.
+        Tries four strategies in order:
+          1. JSON-LD <script type="application/ld+json"> MusicPlaylist schema
+          2. Next.js __NEXT_DATA__ or Spotify.Entity embedded JSON
+          3. Broad hunt in any <script> tag for track-like objects
+          4. yt-dlp flat extraction (last resort)
+        Sets self.last_error if all strategies fail.
+        """
+        self.last_error = None
+
+        page = self._fetch_page()
+        if page:
+            # Strategy 1: JSON-LD MusicPlaylist
+            tracks = self._try_json_ld(page)
+            if tracks:
+                return tracks
+
+            # Strategy 2: __NEXT_DATA__ / Spotify.Entity
+            tracks = self._try_embedded_json(page)
+            if tracks:
+                return tracks
+
+            # Strategy 3: Broad script-tag hunt
+            tracks = self._try_broad_script_hunt(page)
+            if tracks:
+                return tracks
+
+        # Strategy 4: yt-dlp fallback
+        tracks = self._try_ytdlp()
+        if tracks:
+            return tracks
+
+        self.last_error = (
+            "Could not fetch tracks — check that the Spotify playlist is public."
+        )
+        return []
+
+    # ------------------------------------------------------------------
+    # Page fetch
+    # ------------------------------------------------------------------
+
+    def _fetch_page(self) -> str | None:
+        """Fetch the Spotify playlist page HTML."""
+        import urllib.request
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        try:
+            req = urllib.request.Request(self.url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    # Strategy 1: JSON-LD
+    # ------------------------------------------------------------------
+
+    def _try_json_ld(self, page: str) -> list[dict] | None:
+        """Parse JSON-LD MusicPlaylist schema from the page."""
+        import json
+        import re
+
+        for raw in re.findall(
+            r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            page, re.DOTALL,
+        ):
+            try:
+                data = json.loads(raw)
+                if data.get("@type") == "MusicPlaylist":
+                    return self._parse_ld(data)
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _parse_ld(data: dict) -> list[dict]:
+        """Extract tracks from a JSON-LD MusicPlaylist object."""
+        tracks = []
+        for item in data.get("track", []):
+            name = item.get("name", "").strip()
+            if not name:
+                continue
+            by_artist = item.get("byArtist", {})
+            if isinstance(by_artist, dict):
+                artist = by_artist.get("name", "")
+            elif isinstance(by_artist, list) and by_artist:
+                artist = by_artist[0].get("name", "")
+            else:
+                artist = ""
+            tracks.append({
+                "id":     f"{name}::{artist}",
+                "title":  name,
+                "artist": artist,
+            })
+        return tracks
+
+    # ------------------------------------------------------------------
+    # Strategy 2: __NEXT_DATA__ / Spotify.Entity
+    # ------------------------------------------------------------------
+
+    def _try_embedded_json(self, page: str) -> list[dict] | None:
+        """Look for track data in Next.js or Spotify.Entity JSON blobs."""
+        import json
+        import re
+
+        # __NEXT_DATA__
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', page, re.DOTALL)
+        if m:
+            try:
+                result = self._extract_tracks_from_json(json.loads(m.group(1)))
+                if result:
+                    return result
+            except Exception:
+                pass
+
+        # Spotify.Entity — embedded in a <script> tag
+        m = re.search(r'Spotify\.Entity\s*=\s*({.*?});\s*</script>', page, re.DOTALL)
+        if m:
+            try:
+                result = self._extract_tracks_from_json(json.loads(m.group(1)))
+                if result:
+                    return result
+            except Exception:
+                pass
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Strategy 3: Broad script-tag hunt
+    # ------------------------------------------------------------------
+
+    def _try_broad_script_hunt(self, page: str) -> list[dict] | None:
+        """Search all <script> tags for track-like JSON objects."""
+        import json
+        import re
+
+        for raw in re.findall(r'<script[^>]*>(.*?)</script>', page, re.DOTALL):
+            if len(raw) < 50 or "track" not in raw.lower():
+                continue
+            # Try to find JSON objects/arrays in the script content
+            for json_match in re.finditer(r'(\{["\']@type["\'].*?\}|\[.*?\])', raw, re.DOTALL):
+                try:
+                    data = json.loads(json_match.group(1))
+                    result = self._extract_tracks_from_json(data)
+                    if result:
+                        return result
+                except Exception:
+                    continue
+        return None
+
+    # ------------------------------------------------------------------
+    # Strategy 4: yt-dlp fallback
+    # ------------------------------------------------------------------
+
+    def _try_ytdlp(self) -> list[dict] | None:
+        """Use yt-dlp flat extraction as a last resort."""
+        try:
+            opts = {"quiet": True, "extract_flat": True, "no_warnings": True}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(self.url, download=False) or {}
+            entries = info.get("entries") or []
+            result = []
+            for e in entries:
+                title = (e.get("title") or "").strip()
+                if title:
+                    artist = (e.get("artist") or e.get("creator")
+                              or e.get("uploader") or "").strip()
+                    result.append({
+                        "id": e.get("id") or f"{title}::{artist}",
+                        "title": title,
+                        "artist": artist,
+                    })
+            if result:
+                return result
+        except Exception:
+            pass
+        return None
+
+    # ------------------------------------------------------------------
+    # Recursive track extraction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_tracks_from_json(obj, _depth: int = 0) -> list[dict]:
+        """Recursively hunt for track-like objects in arbitrary JSON."""
+        if _depth > 12 or not obj:
+            return []
+        if isinstance(obj, dict):
+            name = (obj.get("name") or obj.get("title") or "")
+            if (isinstance(name, str) and name and
+                    any(k in obj for k in ("artists", "duration_ms",
+                                           "track_number", "uri",
+                                           "is_playable"))):
+                # Extract artist name from Spotify's nested structure
+                artists = obj.get("artists", [])
+                if isinstance(artists, list) and artists:
+                    if isinstance(artists[0], dict):
+                        artist = artists[0].get("name", "")
+                    else:
+                        artist = str(artists[0])
+                else:
+                    artist = (obj.get("artist") or "")
+                return [{"id": f"{name}::{artist}", "title": name, "artist": str(artist)}]
+            results: list[dict] = []
+            for v in obj.values():
+                results.extend(SpotifyPlaylistSource._extract_tracks_from_json(v, _depth + 1))
+            return results
+        if isinstance(obj, list):
+            results = []
+            for item in obj:
+                results.extend(SpotifyPlaylistSource._extract_tracks_from_json(item, _depth + 1))
+            return results
+        return []
 
 
 def detect_apple_music_xml() -> str | None:
