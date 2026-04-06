@@ -542,11 +542,10 @@ class SpotifyPlaylistSource:
     def get_tracks(self) -> list[dict]:
         """
         Returns list of dicts: {id, title, artist}.
-        Tries four strategies in order:
-          1. JSON-LD <script type="application/ld+json"> MusicPlaylist schema
-          2. Next.js __NEXT_DATA__ or Spotify.Entity embedded JSON
-          3. Broad hunt in any <script> tag for track-like objects
-          4. yt-dlp flat extraction (last resort)
+        Fetches the embed page to get the first 100 tracks + an access
+        token.  If the embed returned exactly 100 tracks (likely
+        truncated), uses the Spotify Web API to paginate the rest.
+        Falls back to yt-dlp if scraping fails entirely.
         Sets self.last_error if all strategies fail.
         """
         self.last_error = None
@@ -558,9 +557,14 @@ class SpotifyPlaylistSource:
             if tracks:
                 return tracks
 
-            # Strategy 2: __NEXT_DATA__ / Spotify.Entity
+            # Strategy 2: __NEXT_DATA__ / Spotify.Entity (primary path)
             tracks = self._try_embedded_json(page)
             if tracks:
+                # Embed caps at 100 — paginate via API if needed
+                if len(tracks) >= 100:
+                    extra = self._fetch_remaining_via_api(page, len(tracks))
+                    if extra:
+                        tracks.extend(extra)
                 return tracks
 
             # Strategy 3: Broad script-tag hunt
@@ -707,6 +711,103 @@ class SpotifyPlaylistSource:
             track_id = item.get("uri") or f"{title}::{artist}"
             tracks.append({"id": track_id, "title": title, "artist": artist})
         return tracks
+
+    # ------------------------------------------------------------------
+    # API pagination for playlists > 100 tracks
+    # ------------------------------------------------------------------
+
+    def _fetch_remaining_via_api(self, page: str, already_have: int) -> list[dict]:
+        """Use the anonymous access token from the embed page to fetch
+        tracks beyond the 100-track embed limit via the Spotify Web API.
+
+        Returns an empty list (gracefully) if the API is unavailable or
+        rate-limited — the caller already has the first 100 tracks.
+        """
+        import json
+        import re
+        import time
+        import urllib.request
+
+        # Extract access token from the embed page
+        m = re.search(r'"accessToken"\s*:\s*"([^"]+)"', page)
+        if not m:
+            return []
+        token = m.group(1)
+
+        # Extract playlist ID from URL
+        m_id = re.search(r'playlist/([A-Za-z0-9]+)', self.url)
+        if not m_id:
+            return []
+        playlist_id = m_id.group(1)
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            ),
+            "Authorization": f"Bearer {token}",
+        }
+
+        def _api_get(url: str) -> dict | None:
+            """Single API request with one retry on 429."""
+            req = urllib.request.Request(url, headers=headers)
+            for _attempt in range(2):
+                try:
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        return json.loads(resp.read().decode("utf-8"))
+                except urllib.error.HTTPError as e:
+                    if e.code == 429 and _attempt == 0:
+                        wait = min(int(e.headers.get("Retry-After", "3")), 10)
+                        time.sleep(wait)
+                    else:
+                        return None
+                except Exception:
+                    return None
+            return None
+
+        # Quick check: is the playlist actually larger than what we have?
+        meta = _api_get(
+            f"https://api.spotify.com/v1/playlists/{playlist_id}"
+            f"?fields=tracks.total"
+        )
+        if not meta:
+            return []
+        total = meta.get("tracks", {}).get("total", 0)
+        if total <= already_have:
+            return []  # embed had everything
+
+        extra_tracks: list[dict] = []
+        offset = already_have
+        limit = 100
+
+        while offset < total:
+            data = _api_get(
+                f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+                f"?limit={limit}&offset={offset}"
+                f"&fields=items(track(name,artists(name),id,uri))"
+            )
+            if data is None:
+                break
+
+            items = data.get("items") or []
+            for item in items:
+                t = item.get("track")
+                if not t:
+                    continue
+                title = (t.get("name") or "").strip()
+                if not title:
+                    continue
+                artists = t.get("artists") or []
+                artist = ", ".join(a.get("name", "") for a in artists if a.get("name"))
+                track_id = t.get("uri") or f"{title}::{artist}"
+                extra_tracks.append({"id": track_id, "title": title, "artist": artist})
+
+            offset += limit
+            if not items:
+                break
+            time.sleep(0.3)  # be polite
+
+        return extra_tracks
 
     # ------------------------------------------------------------------
     # Strategy 3: Broad script-tag hunt
