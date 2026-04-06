@@ -319,7 +319,7 @@ class DownloadsTab(QWidget):
         sp_url_row.addWidget(QLabel("Playlist URL:"))
         self._sp_url_edit = QLineEdit()
         self._sp_url_edit.setPlaceholderText(
-            "Paste a open.spotify.com/playlist/... URL and press Enter…")
+            "Paste an open.spotify.com/playlist/... URL and press Enter…")
         self._sp_url_edit.returnPressed.connect(self._on_add_spotify_url)
         sp_url_row.addWidget(self._sp_url_edit, stretch=1)
         btn_sp_add = QPushButton("+ Add")
@@ -335,6 +335,8 @@ class DownloadsTab(QWidget):
         self._sp_table.horizontalHeader().setSectionResizeMode(
             1, self._sp_table.horizontalHeader().ResizeMode.ResizeToContents)
         self._sp_table.verticalHeader().setVisible(False)
+        self._sp_table.verticalHeader().setDefaultSectionSize(26)
+        self._sp_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._sp_table.setMaximumHeight(100)
         sp_lay.addWidget(self._sp_table)
         lay.addWidget(sp_group)
@@ -828,7 +830,7 @@ class DownloadsTab(QWidget):
         if "open.spotify.com/playlist" not in url:
             QMessageBox.warning(
                 self, "Invalid URL",
-                "Please paste a open.spotify.com/playlist URL.\n"
+                "Please paste an open.spotify.com/playlist URL.\n"
                 "Example: https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoY…")
             return
         # Ask for a friendly label
