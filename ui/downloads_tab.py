@@ -28,6 +28,7 @@ from downloader.playlist_sync import (
     YouTubePlaylistSource,
     AppleMusicSource,
     AppleMusicURLSource,
+    SpotifyPlaylistSource,
     PlaylistSyncWorker,
     load_sync_state,
     detect_apple_music_xml,
@@ -976,6 +977,9 @@ class DownloadsTab(QWidget):
                 sources.append(src)
             elif sub.get("type") == "apple_music_url":
                 src = AppleMusicURLSource(sub["url"], sub.get("label", sub["url"]))
+                sources.append(src)
+            elif sub.get("type") == "spotify":
+                src = SpotifyPlaylistSource(sub["url"], sub.get("label", sub["url"]))
                 sources.append(src)
         return sources
 
