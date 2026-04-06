@@ -562,16 +562,13 @@ class SpotifyPlaylistSource:
             if tracks:
                 # Embed caps at 100 — paginate via API if needed
                 if len(tracks) >= 100:
-                    before = len(tracks)
-                    extra = self._fetch_remaining_via_api(page, before)
+                    extra = self._fetch_remaining_via_api(page, len(tracks))
                     if extra:
                         tracks.extend(extra)
-                    elif before == len(tracks):
-                        # API failed — we may have a truncated list
+                    else:
                         self.last_error = (
-                            f"Got first {before} tracks; Spotify API "
-                            f"rate-limited — remaining tracks will appear "
-                            f"on next sync."
+                            f"Got first {len(tracks)} tracks; "
+                            f"remaining tracks will appear on next sync."
                         )
                 return tracks
 
@@ -725,22 +722,27 @@ class SpotifyPlaylistSource:
     # ------------------------------------------------------------------
 
     def _fetch_remaining_via_api(self, page: str, already_have: int) -> list[dict]:
-        """Use the anonymous access token from the embed page to fetch
-        tracks beyond the 100-track embed limit via the Spotify Web API.
+        """Use the Spotify partner (GraphQL) API to fetch tracks beyond
+        the 100-track embed limit.
 
-        Returns an empty list (gracefully) if the API is unavailable or
-        rate-limited — the caller already has the first 100 tracks.
+        The partner API (api-partner.spotify.com) uses a different rate-
+        limit pool than the public Web API and supports pages of 200.
+        Requires an access token (from the embed page) plus a client
+        token from clienttoken.spotify.com.
+
+        Returns an empty list (gracefully) if anything fails — the
+        caller already has the first 100 tracks.
         """
         import json
         import re
-        import time
+        import urllib.parse
         import urllib.request
 
         # Extract access token from the embed page
         m = re.search(r'"accessToken"\s*:\s*"([^"]+)"', page)
         if not m:
             return []
-        token = m.group(1)
+        access_token = m.group(1)
 
         # Extract playlist ID from URL
         m_id = re.search(r'playlist/([A-Za-z0-9]+)', self.url)
@@ -748,72 +750,105 @@ class SpotifyPlaylistSource:
             return []
         playlist_id = m_id.group(1)
 
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-            ),
-            "Authorization": f"Bearer {token}",
-        }
-
-        def _api_get(url: str) -> dict | None:
-            """Single API request with one retry on 429."""
-            req = urllib.request.Request(url, headers=headers)
-            for _attempt in range(2):
-                try:
-                    with urllib.request.urlopen(req, timeout=15) as resp:
-                        return json.loads(resp.read().decode("utf-8"))
-                except urllib.error.HTTPError as e:
-                    if e.code == 429 and _attempt == 0:
-                        wait = min(int(e.headers.get("Retry-After", "3")), 10)
-                        time.sleep(wait)
-                    else:
-                        return None
-                except Exception:
-                    return None
-            return None
-
-        # Quick check: is the playlist actually larger than what we have?
-        meta = _api_get(
-            f"https://api.spotify.com/v1/playlists/{playlist_id}"
-            f"?fields=tracks.total"
+        ua = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         )
-        if not meta:
+
+        # Obtain a client token (required by partner API)
+        try:
+            ct_body = json.dumps({
+                "client_data": {
+                    "client_version": "1.2.52.442.g0f1fed42",
+                    "client_id": "d8a5ed958d274c2e8ee717e6a4b0971d",
+                    "js_sdk_data": {},
+                }
+            }).encode()
+            ct_req = urllib.request.Request(
+                "https://clienttoken.spotify.com/v1/clienttoken",
+                data=ct_body,
+                headers={
+                    "User-Agent": ua,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+            )
+            with urllib.request.urlopen(ct_req, timeout=10) as resp:
+                ct_data = json.loads(resp.read().decode("utf-8"))
+            client_token = ct_data.get("granted_token", {}).get("token", "")
+            if not client_token:
+                return []
+        except Exception:
             return []
-        total = meta.get("tracks", {}).get("total", 0)
-        if total <= already_have:
-            return []  # embed had everything
+
+        # GraphQL persisted-query hash for fetchPlaylistContents
+        GQL_HASH = (
+            "32b05e92e438438408674f95d0fdad8082865dc32acd55bd97f5113b8579092b"
+        )
+
+        api_headers = {
+            "User-Agent": ua,
+            "Authorization": f"Bearer {access_token}",
+            "client-token": client_token,
+            "app-platform": "WebPlayer",
+        }
 
         extra_tracks: list[dict] = []
         offset = already_have
-        limit = 100
+        limit = 200  # partner API supports 200 per page
 
-        while offset < total:
-            data = _api_get(
-                f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
-                f"?limit={limit}&offset={offset}"
-                f"&fields=items(track(name,artists(name),id,uri))"
+        while True:
+            variables = json.dumps({
+                "uri": f"spotify:playlist:{playlist_id}",
+                "offset": offset,
+                "limit": limit,
+            })
+            extensions = json.dumps({
+                "persistedQuery": {
+                    "version": 1,
+                    "sha256Hash": GQL_HASH,
+                }
+            })
+            url = (
+                "https://api-partner.spotify.com/pathfinder/v1/query"
+                f"?operationName=fetchPlaylistContents"
+                f"&variables={urllib.parse.quote(variables)}"
+                f"&extensions={urllib.parse.quote(extensions)}"
             )
-            if data is None:
+            req = urllib.request.Request(url, headers=api_headers)
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+            except Exception:
                 break
 
-            items = data.get("items") or []
+            content = (data.get("data", {})
+                       .get("playlistV2", {})
+                       .get("content", {}))
+            total = content.get("totalCount", 0)
+            items = content.get("items") or []
+
             for item in items:
-                t = item.get("track")
-                if not t:
-                    continue
-                title = (t.get("name") or "").strip()
+                track_data = (item.get("itemV2", {})
+                              .get("data", {}))
+                title = (track_data.get("name") or "").strip()
                 if not title:
                     continue
-                artists = t.get("artists") or []
-                artist = ", ".join(a.get("name", "") for a in artists if a.get("name"))
-                track_id = t.get("uri") or f"{title}::{artist}"
-                extra_tracks.append({"id": track_id, "title": title, "artist": artist})
+                artist_items = (track_data.get("artists", {})
+                                .get("items") or [])
+                artist = ", ".join(
+                    a.get("profile", {}).get("name", "")
+                    for a in artist_items
+                    if a.get("profile", {}).get("name")
+                )
+                uri = track_data.get("uri") or f"{title}::{artist}"
+                extra_tracks.append({
+                    "id": uri, "title": title, "artist": artist,
+                })
 
             offset += limit
-            if not items:
+            if offset >= total or not items:
                 break
-            time.sleep(0.3)  # be polite
 
         return extra_tracks
 
