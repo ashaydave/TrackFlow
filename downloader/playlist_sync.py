@@ -562,9 +562,17 @@ class SpotifyPlaylistSource:
             if tracks:
                 # Embed caps at 100 — paginate via API if needed
                 if len(tracks) >= 100:
-                    extra = self._fetch_remaining_via_api(page, len(tracks))
+                    before = len(tracks)
+                    extra = self._fetch_remaining_via_api(page, before)
                     if extra:
                         tracks.extend(extra)
+                    elif before == len(tracks):
+                        # API failed — we may have a truncated list
+                        self.last_error = (
+                            f"Got first {before} tracks; Spotify API "
+                            f"rate-limited — remaining tracks will appear "
+                            f"on next sync."
+                        )
                 return tracks
 
             # Strategy 3: Broad script-tag hunt
