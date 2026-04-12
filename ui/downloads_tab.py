@@ -228,28 +228,49 @@ class DownloadsTab(QWidget):
     # ── Subscriptions tab ──────────────────────────────────────────────
 
     def _build_subs_tab(self) -> QWidget:
+        from PyQt6.QtWidgets import QSplitter
+        from PyQt6.QtCore import Qt
+
         page   = QWidget()
         lay    = QVBoxLayout(page)
-        lay.setContentsMargins(12, 12, 12, 12)
-        lay.setSpacing(10)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(6)
+
+        # Use a vertical splitter so the user can drag the divider
+        # between "subscriptions" and "not found" sections.
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setHandleWidth(4)
+        splitter.setStyleSheet(
+            "QSplitter::handle { background: #1a2a3a; }")
+
+        # ── Top half: subscription sources ─────────────────────────────
+        top_widget = QWidget()
+        top_lay    = QVBoxLayout(top_widget)
+        top_lay.setContentsMargins(4, 4, 4, 0)
+        top_lay.setSpacing(6)
+
+        # Helper for compact subscription tables
+        def _make_sub_table(cols: int, headers: list[str]) -> QTableWidget:
+            t = QTableWidget(0, cols)
+            t.setHorizontalHeaderLabels(headers)
+            t.horizontalHeader().setSectionResizeMode(
+                0, QHeaderView.ResizeMode.Stretch)
+            for c in range(1, cols):
+                t.horizontalHeader().setSectionResizeMode(
+                    c, QHeaderView.ResizeMode.ResizeToContents)
+            t.verticalHeader().setVisible(False)
+            t.verticalHeader().setDefaultSectionSize(24)
+            t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            t.setMaximumHeight(80)
+            return t
 
         # ── YouTube playlists ──────────────────────────────────────────
         yt_group = QGroupBox("YouTube Playlists")
         yt_lay   = QVBoxLayout(yt_group)
-        yt_lay.setSpacing(6)
+        yt_lay.setContentsMargins(8, 4, 8, 4)
+        yt_lay.setSpacing(4)
 
-        self._yt_table = QTableWidget(0, 3)
-        self._yt_table.setHorizontalHeaderLabels(["Label", "URL", ""])
-        self._yt_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents)
-        self._yt_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch)
-        self._yt_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents)
-        self._yt_table.verticalHeader().setVisible(False)
-        self._yt_table.verticalHeader().setDefaultSectionSize(26)
-        self._yt_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._yt_table.setMaximumHeight(100)
+        self._yt_table = _make_sub_table(3, ["Label", "URL", ""])
         yt_lay.addWidget(self._yt_table)
 
         yt_btn_row = QHBoxLayout()
@@ -258,12 +279,13 @@ class DownloadsTab(QWidget):
         yt_btn_row.addWidget(btn_add_yt)
         yt_btn_row.addStretch()
         yt_lay.addLayout(yt_btn_row)
-        lay.addWidget(yt_group)
+        top_lay.addWidget(yt_group)
 
         # ── Apple Music / Shazam ───────────────────────────────────────
         am_group = QGroupBox("Apple Music / Shazam")
         am_lay   = QVBoxLayout(am_group)
-        am_lay.setSpacing(6)
+        am_lay.setContentsMargins(8, 4, 8, 4)
+        am_lay.setSpacing(4)
 
         # Primary: URL quick-add row
         url_row = QHBoxLayout()
@@ -287,16 +309,7 @@ class DownloadsTab(QWidget):
         )
         self._xml_edit.setVisible(False)  # hidden — managed via secondary button below
 
-        self._am_table = QTableWidget(0, 2)
-        self._am_table.setHorizontalHeaderLabels(["Playlist", ""])
-        self._am_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch)
-        self._am_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents)
-        self._am_table.verticalHeader().setVisible(False)
-        self._am_table.verticalHeader().setDefaultSectionSize(26)
-        self._am_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._am_table.setMaximumHeight(100)
+        self._am_table = _make_sub_table(2, ["Playlist", ""])
         am_lay.addWidget(self._am_table)
 
         # Secondary: iTunes XML option (less prominent)
@@ -311,12 +324,13 @@ class DownloadsTab(QWidget):
         am_btn_row.addWidget(btn_add_am_xml)
         am_btn_row.addStretch()
         am_lay.addLayout(am_btn_row)
-        lay.addWidget(am_group)
+        top_lay.addWidget(am_group)
 
         # ── Spotify ───────────────────────────────────────────────────
         sp_group = QGroupBox("Spotify")
         sp_lay   = QVBoxLayout(sp_group)
-        sp_lay.setSpacing(6)
+        sp_lay.setContentsMargins(8, 4, 8, 4)
+        sp_lay.setSpacing(4)
 
         sp_url_row = QHBoxLayout()
         sp_url_row.addWidget(QLabel("Playlist URL:"))
@@ -331,18 +345,9 @@ class DownloadsTab(QWidget):
         sp_url_row.addWidget(btn_sp_add)
         sp_lay.addLayout(sp_url_row)
 
-        self._sp_table = QTableWidget(0, 2)
-        self._sp_table.setHorizontalHeaderLabels(["Playlist", ""])
-        self._sp_table.horizontalHeader().setSectionResizeMode(
-            0, self._sp_table.horizontalHeader().ResizeMode.Stretch)
-        self._sp_table.horizontalHeader().setSectionResizeMode(
-            1, self._sp_table.horizontalHeader().ResizeMode.ResizeToContents)
-        self._sp_table.verticalHeader().setVisible(False)
-        self._sp_table.verticalHeader().setDefaultSectionSize(26)
-        self._sp_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._sp_table.setMaximumHeight(100)
+        self._sp_table = _make_sub_table(2, ["Playlist", ""])
         sp_lay.addWidget(self._sp_table)
-        lay.addWidget(sp_group)
+        top_lay.addWidget(sp_group)
 
         # ── Sync controls ──────────────────────────────────────────────
         sync_row = QHBoxLayout()
@@ -364,18 +369,26 @@ class DownloadsTab(QWidget):
         self._sync_status_lbl.setObjectName("meta_text")
         sync_row.addWidget(self._sync_status_lbl)
         sync_row.addStretch()
-        lay.addLayout(sync_row)
+        top_lay.addLayout(sync_row)
 
         cache_hint = QLabel(
-            "ℹ  Already-synced tracks are remembered so they won't re-queue on every launch. "
-            "Click \"🗑 Clear Cache\" to reset.")
+            "ℹ  Already-synced tracks are remembered so they won't re-queue "
+            "on every launch. Click \"🗑 Clear Cache\" to reset.")
         cache_hint.setStyleSheet("color: #556677; font-size: 11px;")
         cache_hint.setWordWrap(True)
-        lay.addWidget(cache_hint)
+        top_lay.addWidget(cache_hint)
 
-        # ── Not found on YouTube ───────────────────────────────────────
+        splitter.addWidget(top_widget)
+
+        # ── Bottom half: Not found on YouTube ──────────────────────────
+        nf_widget = QWidget()
+        nf_outer  = QVBoxLayout(nf_widget)
+        nf_outer.setContentsMargins(4, 0, 4, 4)
+        nf_outer.setSpacing(4)
+
         nf_group = QGroupBox("⚠  Not Found on YouTube")
         nf_lay   = QVBoxLayout(nf_group)
+        nf_lay.setContentsMargins(8, 4, 8, 4)
         nf_lay.setSpacing(4)
 
         self._nf_table = QTableWidget(0, 3)
@@ -386,10 +399,11 @@ class DownloadsTab(QWidget):
             1, QHeaderView.ResizeMode.ResizeToContents)
         self._nf_table.horizontalHeader().setSectionResizeMode(
             2, QHeaderView.ResizeMode.ResizeToContents)
-        self._nf_table.setMaximumHeight(140)
-        self._nf_table.verticalHeader().setDefaultSectionSize(26)
+        self._nf_table.verticalHeader().setVisible(False)
+        self._nf_table.verticalHeader().setDefaultSectionSize(24)
         self._nf_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        nf_lay.addWidget(self._nf_table)
+        self._nf_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        nf_lay.addWidget(self._nf_table, stretch=1)
 
         nf_btn_row = QHBoxLayout()
         btn_retry = QPushButton("Retry Selected")
@@ -400,9 +414,14 @@ class DownloadsTab(QWidget):
         nf_btn_row.addWidget(btn_remove_nf)
         nf_btn_row.addStretch()
         nf_lay.addLayout(nf_btn_row)
-        lay.addWidget(nf_group)
+        nf_outer.addWidget(nf_group, stretch=1)
 
-        lay.addStretch()
+        splitter.addWidget(nf_widget)
+
+        # Give the bottom (Not Found) section more initial space
+        splitter.setSizes([340, 260])
+
+        lay.addWidget(splitter, stretch=1)
 
         # Populate subscription tables from saved config
         self._refresh_subscription_tables()
