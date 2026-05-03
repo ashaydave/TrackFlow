@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QFileDialog, QTabWidget,
     QSplitter, QGroupBox, QInputDialog, QSizePolicy, QProgressBar, QMessageBox,
+    QApplication,
 )
 from PyQt6.QtGui import QColor
 
@@ -490,7 +491,64 @@ class DownloadsTab(QWidget):
         if not url:
             return
         self._url_edit.clear()
-        self._add_to_queue(url, source_label="Manual")
+
+        # If it's a YouTube playlist URL, expand it into individual track rows
+        # (same as the Subscriptions tab). Otherwise add as a single URL.
+        if self._is_youtube_playlist_url(url):
+            self._expand_and_queue_youtube_playlist(url)
+        else:
+            self._add_to_queue(url, source_label="Manual")
+
+    @staticmethod
+    def _is_youtube_playlist_url(url: str) -> bool:
+        """Return True if the URL looks like a YouTube playlist."""
+        u = url.lower()
+        if "youtube.com/playlist" in u:
+            return True
+        # /watch URLs with a list= parameter are also playlists
+        if ("youtube.com/watch" in u or "youtu.be/" in u) and "list=" in u:
+            return True
+        return False
+
+    def _expand_and_queue_youtube_playlist(self, url: str) -> None:
+        """Use yt-dlp extract_flat to fetch playlist entries, then queue each.
+
+        Falls back to queueing the playlist URL as-is if extraction fails.
+        """
+        from downloader.playlist_sync import YouTubePlaylistSource
+
+        # Briefly show a status message so the user knows we're working
+        self._sync_status_lbl_safe_set("Resolving playlist…")
+        QApplication.processEvents()
+
+        try:
+            tracks = YouTubePlaylistSource(url, label="Manual").get_tracks()
+        except Exception:
+            tracks = []
+
+        self._sync_status_lbl_safe_set("")
+
+        if not tracks:
+            self._add_to_queue(url, source_label="Manual")
+            QMessageBox.warning(
+                self, "Playlist Empty",
+                "Could not fetch tracks from that playlist (it may be "
+                "private or empty). Added the playlist URL as-is — "
+                "yt-dlp will attempt to download it directly.")
+            return
+
+        for t in tracks:
+            track_url = t.get("url") or ""
+            title = t.get("title") or track_url
+            if not track_url:
+                continue
+            self._add_to_queue(track_url, title=title, source_label="Manual")
+
+    def _sync_status_lbl_safe_set(self, text: str) -> None:
+        """Set sync status label if it exists (it's on the Subscriptions tab)."""
+        lbl = getattr(self, "_sync_status_lbl", None)
+        if lbl is not None:
+            lbl.setText(text)
 
     def _add_to_queue(self, url: str, title: str = "", source_label: str = "Manual") -> None:
         """Add a URL to the queue list and insert a row in the table."""
