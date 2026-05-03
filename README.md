@@ -62,7 +62,7 @@
 
 #### YouTube
 - Paste any YouTube video or playlist URL into the **Queue** tab
-- Downloads as **MP3 320 kbps** when ffmpeg is detected (auto-detected in common install paths); falls back to native m4a if ffmpeg is unavailable
+- Downloads as **MP3 320 kbps** (requires ffmpeg — see Prerequisites). Falls back to native M4A if ffmpeg is missing.
 - Per-row progress indicator with format badge; **Import** button appears on completion
 - **⏹ Stop** cancels all active and pending queue items at once
 - Per-row **✕** button and **✕ Remove Selected** to clear finished or unwanted entries
@@ -112,13 +112,34 @@ Sync state is persisted in `data/sync_state.json` — already-downloaded tracks 
 
 ## Getting Started
 
-### Prerequisites
+### Download (Windows)
+
+1. Grab the latest `TrackFlow.zip` from the [Releases](https://github.com/ashaydave/TrackFlow/releases) page
+2. Extract it somewhere (e.g. `C:\TrackFlow\`)
+3. **Install ffmpeg** (required — see below)
+4. Run `TrackFlow.exe` from the extracted folder
+
+> Distribute/keep the entire extracted folder, not just the `.exe` — the bundled DLLs and assets sit alongside it.
+
+### ffmpeg (required)
+
+TrackFlow needs ffmpeg to produce **MP3 320 kbps** files. It's auto-detected from your PATH and common install locations.
+
+- **Windows:** Download from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) → extract → add `bin/` folder to PATH, or use `winget install ffmpeg` / `choco install ffmpeg`
+- **macOS:** `brew install ffmpeg`
+- **Linux:** `sudo apt install ffmpeg` (Debian/Ubuntu) or equivalent
+
+> ⚠️ Without ffmpeg, downloads fall back to native M4A — works but has lower compatibility with some DJ software.
+
+### Building from Source
+
+#### Prerequisites
 
 - Python 3.11+
 - Conda (recommended) or pip
-- **ffmpeg** (optional) — required for MP3 320 kbps output. TrackFlow auto-detects it from your PATH and common install locations; without it, downloads fall back to m4a.
+- ffmpeg (see above)
 
-### Installation
+#### Installation
 
 ```bash
 # Clone the repository
@@ -135,13 +156,13 @@ pip install PyQt6 numpy scipy soundfile soxr mutagen pygame yt-dlp watchdog onnx
 
 > **Genre detection** requires `onnxruntime` (included above). The Discogs-EffNet model (~37 MB) downloads automatically on first use. If `onnxruntime` is unavailable the rest of the app works normally — the Genre column simply stays empty.
 
-### Run
+#### Run
 
 ```bash
 python main.py
 ```
 
-### Build Executable (Windows)
+#### Build Executable (Windows)
 
 ```bash
 build.bat
